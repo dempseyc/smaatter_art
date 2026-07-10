@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/inspector.tsx","./src/components/toolbar.tsx","./src/graph/edge.ts","./src/graph/graph.ts","./src/graph/graphgenerator.ts","./src/graph/node.ts","./src/layout/forcelayout.ts","./src/layout/graphlayoutengine.ts","./src/layout/planarlayout.ts","./src/render/svgrenderer.tsx"],"version":"5.9.3"}
