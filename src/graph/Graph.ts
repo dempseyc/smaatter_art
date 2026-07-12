@@ -24,8 +24,11 @@ export class Graph implements GraphData {
             a: data.a,
             b: data.b,
             meta: {
-                roles: data.meta?.roles ?? ['stem']
-            }
+                generation: data.meta?.generation || 0,
+                roles: data.meta?.roles ?? { orientation: 'C', ordinality: 'middle', modRoles: ['odd'], functionalRoles: ['seg'] },
+                siblingCount: data.meta?.siblingCount || 0,
+                siblingIndex: data.meta?.siblingIndex || 0,
+            },
         });
 
         this.edges.set(edge.id, edge);
@@ -39,15 +42,17 @@ export class Graph implements GraphData {
                 id: node.id,
                 x: node.x,
                 y: node.y,
+                angle: node.angle,
                 meta: {
-                    roles: [...node.meta.roles],
+                    roles: { ...node.meta.roles },
+                    generation: node.meta.generation,
                     siblingIndex: node.meta.siblingIndex,
                     siblingCount: node.meta.siblingCount,
                 }
             });
         });
         this.edges.forEach((edge) => {
-            copy.addEdge({ id: edge.id, a: edge.a, b: edge.b, meta: { roles: [...edge.meta.roles] } });
+            copy.addEdge({ id: edge.id, a: edge.a, b: edge.b, meta: { roles: { ...edge.meta.roles }, generation: edge.meta.generation, siblingCount: edge.meta.siblingCount, siblingIndex: edge.meta.siblingIndex } });
         });
         return copy;
     }

@@ -5,10 +5,15 @@
     width: 20px;
 }
 
-.root {
+.gen0 {
     fill: white
 }
 
 .gen1 {
     fill: red;
+}
+
+.edge {
+    stroke: grey;
+    stroke-width: 2px;
 }
