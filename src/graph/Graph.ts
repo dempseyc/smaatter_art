@@ -25,7 +25,7 @@ export class Graph implements GraphData {
             b: data.b,
             meta: {
                 generation: data.meta?.generation || 0,
-                roles: data.meta?.roles ?? { orientation: 'C', ordinality: 'middle', modRoles: ['odd'], functionalRoles: ['seg'] },
+                roles: data.meta?.roles ?? { orientation: 'centered', ordinality: 'middle', modRoles: ['odd'], functionalRoles: ['seg'] },
                 siblingCount: data.meta?.siblingCount || 0,
                 siblingIndex: data.meta?.siblingIndex || 0,
             },

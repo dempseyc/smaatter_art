@@ -41,7 +41,7 @@ export class EdgeRecord implements Edge {
         this.a = data.a;
         this.b = data.b;
         this.meta = {
-            roles: data.meta?.roles ?? { orientation: 'C', ordinality: 'middle', modRoles: ['odd'], functionalRoles: ['seg'] },
+            roles: data.meta?.roles ?? { orientation: 'centered', ordinality: 'middle', modRoles: ['odd'], functionalRoles: ['seg'] },
             generation: data.meta?.generation ?? 0,
             siblingCount: data.meta?.siblingCount || 0,
             siblingIndex: data.meta?.siblingIndex || 0,

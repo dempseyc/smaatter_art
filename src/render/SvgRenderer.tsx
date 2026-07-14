@@ -59,7 +59,7 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
                 {Array.from(graph.nodes.values()).map((node) => (
                     <g key={node.id}>
                         <circle cx={node.x} cy={node.y} r="10" className={nodeCSSclasses(node)} />
-                        <text x={node.x} y={node.y + 4} textAnchor="middle" fontSize="24" fill="white">
+                        <text x={node.x} y={node.y + 4} className="label" textAnchor="middle" fill="white">
                             {node.id}
                         </text>
                     </g>

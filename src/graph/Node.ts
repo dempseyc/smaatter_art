@@ -1,4 +1,4 @@
-import { OrientationRole, OrdinalityRole, ModRole, FunctionalNodeRoles, NodeRoles } from './GraphGenerator';
+import { NodeRoles } from './GraphGenerator';
 
 export type NodeId = string;
 
@@ -33,7 +33,7 @@ export class NodeRecord implements Node {
         this.y = data.y ?? 0;
         this.angle = data.angle ?? 0;
         this.meta = {
-            roles: data.meta?.roles ?? { functionalRoles: ['point'], modRoles: ['odd'], orientation: 'C', ordinality: 'middle' } as NodeRoles,
+            roles: data.meta?.roles ?? { functionalRoles: ['point'], modRoles: ['odd'], orientation: 'centered', ordinality: 'middle' } as NodeRoles,
             generation: data.meta?.generation ?? 0,
             siblingIndex: data.meta?.siblingIndex,
             siblingCount: data.meta?.siblingCount,
