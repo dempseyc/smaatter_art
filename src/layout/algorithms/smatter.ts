@@ -10,7 +10,7 @@ export function runSmatter(graphologyGraph: Graphology, width: number, height: n
     const radiusBase = Math.min(width, height) * 0.25;
     const visited = new Set<string>();
 
-    const layout = (
+    const layout0to3 = (
         nodeId: string,
         parentId: string | null,
         depth: number,
@@ -60,11 +60,46 @@ export function runSmatter(graphologyGraph: Graphology, width: number, height: n
 
         children.forEach((child) => {
             // Pass the current totalAngle down as the parent's angle to the next generation
-            layout(child, nodeId, depth + 1, totalAngle);
+            const childGen = graphologyGraph.getNodeAttribute(child, 'generation') as number;
+            if (childGen <= 2) {
+                layout0to3(child, nodeId, depth + 1, totalAngle);
+            }
         });
     };
 
     // Root node starts with angle 0 (or whatever it's assigned)
-    layout(rootId, null, 0, 0);
+    layout0to3(rootId, null, 0, 0);
+
+    // After recursive tree layout is complete, position border and terminal nodes absolutely
+    // 3/8 width = width * 0.375
+    // 1/2 width = width * 0.5 (minus a small margin to keep them on screen)
+    const borderRadius = Math.min(width, height) * 0.425;
+    const terminalRadius = (Math.min(width, height) * 0.5) - 20;
+
+    nodes.forEach(nodeId => {
+        const roles = (graphologyGraph.getNodeAttribute(nodeId, 'meta') as any)?.roles;
+        const functionalRoles = roles?.functionalRoles || [];
+        const isBorder = functionalRoles.includes('border') || (nodeId.startsWith('BC-')) || (nodeId.startsWith('B-'));
+        const isTerminal = functionalRoles.includes('terminal') || (nodeId.startsWith('T-'));
+
+        if (isBorder || isTerminal) {
+            // These nodes have their global angle encoded directly from GraphGenerator
+            let angle = (graphologyGraph.getNodeAttribute(nodeId, 'angle') as number) ?? 0;
+
+            // if it is a terminal node starting with 'parentId-j', its angle is relative to the parent
+            // we should get the total calculated angle that the parent accumulated
+            if (isTerminal && !nodeId.startsWith('T-')) {
+                const parentId = (graphologyGraph.getNodeAttribute(nodeId, 'parentId') as string) || (nodeId.split('-').slice(0, 2).join('-'));
+                const parentAngle = (graphologyGraph.getNodeAttribute(parentId, 'angle') as number) ?? 0;
+                angle = parentAngle + angle;
+            }
+
+            const radius = isTerminal ? terminalRadius : borderRadius;
+
+            // We add Pi / 2 here to match the angle rotation used in layout0to3 above
+            graphologyGraph.setNodeAttribute(nodeId, 'x', centerX + (Math.cos(angle + Math.PI / 2) * radius));
+            graphologyGraph.setNodeAttribute(nodeId, 'y', centerY + (Math.sin(angle + Math.PI / 2) * radius));
+        }
+    });
 }
 

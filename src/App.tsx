@@ -29,7 +29,7 @@ function App() {
                                     ? 'smatter'
                                     : 'fruchtermanReingold';
 
-        return new GraphLayoutEngine(algorithm, { width: 760, height: 520 });
+        return new GraphLayoutEngine(algorithm, { width: 734, height: 734 });
     }, [layoutMode]);
 
     const positionedGraph = useMemo(() => {

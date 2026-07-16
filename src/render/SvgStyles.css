@@ -21,8 +21,27 @@
 /* .lefthand {
     stroke: green;
     stroke-width: 3px;
-}
+}*/
 
 .even {
+    stroke: green;
     stroke-width: 5px;
-} */
+}
+
+.mod3 {
+    fill: purple;
+}
+
+.spoke {
+    stroke: orange;
+}
+
+.end {
+    stroke: blue;
+    stroke-width: 3px;
+}
+
+.centered {
+    stroke: yellow;
+    stroke-width: 3px;
+}
