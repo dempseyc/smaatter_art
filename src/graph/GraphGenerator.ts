@@ -336,9 +336,9 @@ export class GraphGenerator {
                 const chainNodeId = `BC-${bIdx}-${c}`;
 
                 const chainNodeRoles: NodeRoles = {
-                    orientation: 'centered',
+                    orientation: 'not-center',
                     ordinality: 'middle',
-                    functionalRoles: ['genN'],
+                    functionalRoles: ['genN', 'border-joint'],
                     modRoles: []
                 };
 
@@ -349,7 +349,7 @@ export class GraphGenerator {
                 });
 
                 const chainEdgeRoles: EdgeRoles = {
-                    orientation: 'centered',
+                    orientation: 'not-center',
                     ordinality: 'middle',
                     functionalRoles: ['genN-seg', 'border-chain'],
                     modRoles: []
@@ -368,7 +368,7 @@ export class GraphGenerator {
             // Connect the last chain node to the end border node
             if (chainNodeCount > 0) {
                 const finalChainEdgeRoles: EdgeRoles = {
-                    orientation: 'centered',
+                    orientation: 'not-center',
                     ordinality: 'middle',
                     functionalRoles: ['genN-seg', 'border-chain'],
                     modRoles: []
@@ -382,7 +382,7 @@ export class GraphGenerator {
             } else {
                 // If chainNodeCount is 0 (ranB was 1), connect start to end directly
                 const directChainEdgeRoles: EdgeRoles = {
-                    orientation: 'centered',
+                    orientation: 'not-center',
                     ordinality: 'middle',
                     functionalRoles: ['genN-seg', 'border-chain'],
                     modRoles: []
