@@ -43,6 +43,8 @@ export class Graph implements GraphData {
                 x: node.x,
                 y: node.y,
                 angle: node.angle,
+                targetX: node.targetX,
+                targetY: node.targetY,
                 meta: {
                     roles: { ...node.meta.roles },
                     generation: node.meta.generation,

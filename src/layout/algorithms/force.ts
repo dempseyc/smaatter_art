@@ -7,7 +7,7 @@ export function runForce(graphologyGraph: Graphology, width: number, height: num
     }
 
     const positions = new Map<string, { x: number; y: number }>();
-    const radius = Math.min(width, height) * 0.28;
+    const radius = Math.min(width, height) * 0.1;
 
     nodes.forEach((nodeId, index) => {
         const angle = (index / Math.max(1, nodes.length)) * Math.PI * 2;
@@ -17,7 +17,7 @@ export function runForce(graphologyGraph: Graphology, width: number, height: num
         });
     });
 
-    const k = Math.sqrt((width * height) / Math.max(1, nodes.length)) * 0.7;
+    const k = Math.sqrt((width * height) / Math.max(1, nodes.length)) * 0.4;
 
     for (let iteration = 0; iteration < iterations; iteration += 1) {
         const displacements = new Map<string, { x: number; y: number }>(nodes.map((nodeId) => [nodeId, { x: 0, y: 0 }]));

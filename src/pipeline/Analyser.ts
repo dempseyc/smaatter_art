@@ -335,4 +335,36 @@ export class Analyser {
 
         return ops;
     }
+
+    static findExpandableNodes(graph: Graph): ExpandOperation[] {
+
+        const ops: ExpandOperation[] = [];
+        const nodes = Array.from(graph.nodes.values());
+        if (nodes.length === 0) return ops;
+
+        for (const node of nodes) {
+            // Only consider nodes that are not border or terminal nodes or border-joint nodes or 'to-border'nodes which conect to border-joint nodes
+            const isBorderNode = node.meta.roles.functionalRoles.some(r => r.includes('border'));
+            const isTerminal = node.meta.roles.functionalRoles.includes('terminal');
+            const isBorderJoint = node.meta.roles.functionalRoles.includes('border-joint');
+            if (isBorderNode || isTerminal || isBorderJoint) continue;
+
+            // border-chain edges must not be counted never
+            // If the node has more than 5 edges, we consider it expandable
+            const nonBorderEdges = Array.from(graph.edges.values()).filter(e => {
+                const isToBorder = e.meta.roles.functionalRoles.includes('to-border');
+                const isBorderEdge = e.meta.roles.functionalRoles.includes('border-chain');
+                return !isBorderEdge && !isToBorder && (e.a === node.id || e.b === node.id);
+            });
+            if (nonBorderEdges.length > 5) {
+                ops.push({ type: 'expand', nodeId: node.id });
+            }
+            const edgeCount = Array.from(graph.edges.values()).filter(e => e.a === node.id || e.b === node.id).length;
+            if (edgeCount > 5) {
+                ops.push({ type: 'expand', nodeId: node.id });
+            }
+        }
+
+        return ops;
+    }
 }

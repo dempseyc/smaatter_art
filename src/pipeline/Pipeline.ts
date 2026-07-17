@@ -2,6 +2,13 @@ import { Graph } from '../graph/Graph';
 import { Analyser } from './Analyser';
 import { GraphGenerator } from '../graph/GraphGenerator';
 import { GraphLayoutEngine } from '../layout/GraphLayoutEngine';
+import { GraphSnapshot, applySnapshotAsTargets, captureSnapshot } from '../graph/GraphSnapshot';
+
+export interface AnalysisResult {
+    graph: Graph;
+    /** Node positions captured immediately before any mutations. */
+    snapshots: GraphSnapshot[]; // [snapshot0, snapshot1, 2,3,4,etc]
+}
 
 export class Pipeline {
     static generateInitialGraph(layoutEngine: GraphLayoutEngine): Graph {
@@ -80,9 +87,23 @@ export class Pipeline {
         return true;
     }
 
-    static runFullAnalysis(graph: Graph, width: number): Graph {
+    /** If a node has > 5 edges, make it a hole, by makeng a new node interpolated between itself and each neighbor,
+     * then connecting those new nodes to each other in a ring, then removing the original node. This is a one-pass operation, and may need to be repeated if new nodes are created that also have > 5 edges. */
+    static runHoleCreation(graph: Graph): boolean {
+        const ops = Analyser.findExpandableNodes(graph);
+        if (ops.length === 0) return false;
+        for (const op of ops) {
+            GraphGenerator.createHole(graph, op.nodeId);
+        }
+        return true;
+    }
+
+    /** Runs a full analysis pass on the graph, returning the final graph and snapshots of node positions before and after mutations. */
+
+    static runFullAnalysis(graph: Graph, width: number): AnalysisResult {
         const currentGraph = graph.clone();
-        const maxIterations = 25;
+        const snapshot0 = captureSnapshot(currentGraph);
+        const maxIterations = 50;
 
         for (let i = 0; i < maxIterations; i++) {
             // Always merge first to a clean state
@@ -98,6 +119,15 @@ export class Pipeline {
             break;
         }
 
-        return currentGraph;
+        const snapshot1 = captureSnapshot(currentGraph);
+
+        Pipeline.runHoleCreation(currentGraph);
+
+        const snapshot2 = captureSnapshot(currentGraph);
+
+        applySnapshotAsTargets(currentGraph, snapshot2);
+
+
+        return { graph: currentGraph, snapshots: [snapshot0, snapshot1, snapshot2] };
     }
 }

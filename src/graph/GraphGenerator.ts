@@ -1,13 +1,14 @@
 import { Graph } from './Graph';
+import { Node } from './Node';
 
 // edge and node roles
 export type OrientationRole = 'centered' | 'not-center';
 export type OrdinalityRole = 'end' | 'middle';
 export type ModRole = 'odd' | 'even' | 'mod3' | 'serial';
 // node roles
-export type FunctionalNodeRoles = 'point' | 'gen1' | 'gen0' | 'genN' | 'loop-root' | 'loop-joint' | 'sibling-joint' | 'y-fork' | 'hub' | 'terminal' | 'border' | 'border-joint' | 'top-border' | 'right-border' | 'bottom-border' | 'left-border' | 'derived' | 'derived2';
+export type FunctionalNodeRoles = 'point' | 'gen1' | 'gen0' | 'genN' | 'loop-root' | 'loop-joint' | 'sibling-joint' | 'hub' | 'terminal' | 'border' | 'border-joint' | 'top-border' | 'right-border' | 'bottom-border' | 'left-border' | 'derived' | 'derived2' | 'hole-joint';
 // edge roles
-export type FunctionalEdgeRoles = 'seg' | 'gen0-seg' | 'gen1-seg' | 'genN-seg' | 'loop-seg' | 'sibling-seg' | 'spoke' | 'y-branch' | 'to-terminal' | 'to-border' | 'border-chain' | 'derived' | 'derived2';
+export type FunctionalEdgeRoles = 'seg' | 'gen0-seg' | 'gen1-seg' | 'genN-seg' | 'loop-seg' | 'sibling-seg' | 'spoke' | 'to-terminal' | 'to-border' | 'border-chain' | 'derived' | 'derived2' | 'hole-seg';
 
 export type NodeRoles = {
     orientation: OrientationRole;
@@ -555,7 +556,23 @@ export class GraphGenerator {
             id: intersectionNodeId,
             x,
             y,
-            angle: 0,
+            // angle should be the angle of the oldest node connected to the edges, or 0 if both are the same generation
+            angle: (() => {
+                const nodeA1 = graph.nodes.get(edgeA.a);
+                const nodeA2 = graph.nodes.get(edgeA.b);
+                const nodeB1 = graph.nodes.get(edgeB.a);
+                const nodeB2 = graph.nodes.get(edgeB.b);
+
+                const nodes: Node[] = [nodeA1, nodeA2, nodeB1, nodeB2].concat().filter((n): n is Node => n !== undefined);
+
+                if (nodes.length === 0) return 0;
+
+                const oldestNode = nodes.reduce((oldest, current) => {
+                    return (current.meta.generation < oldest.meta.generation) ? current : oldest;
+                });
+
+                return oldestNode.angle;
+            })(),
             meta: {
                 generation: Math.max(edgeA.meta.generation, edgeB.meta.generation) + 1,
                 roles: {
@@ -573,7 +590,7 @@ export class GraphGenerator {
         this.splitEdge(graph, edgeBId, intersectionNodeId, x, y);
     }
 
-    static connectNeighbor(graph: Graph, sourceId: string, targetId: string): void {
+    static connectNeighbor(graph: Graph, sourceId: string, targetId: string, roles?: EdgeRoles): void {
         // Create an edge between two neighbor nodes
         const edgeId = `${sourceId}-${targetId}`;
 
@@ -586,7 +603,7 @@ export class GraphGenerator {
         const sourceNode = graph.nodes.get(sourceId);
         const generation = sourceNode?.meta.generation ?? 0;
 
-        const edgeRoles: EdgeRoles = {
+        const edgeRoles: EdgeRoles = roles ?? {
             orientation: 'not-center',
             ordinality: 'middle',
             functionalRoles: ['derived'],
@@ -604,5 +621,100 @@ export class GraphGenerator {
                 siblingIndex: 0
             }
         });
+    }
+
+    static createHole(graph: Graph, nodeId: string): void {
+        const node = graph.nodes.get(nodeId);
+        if (!node) return;
+
+        // Get all neighbors of the node excluding itself, and any border or 'centered' nodes
+        const neighbors = Array.from(graph.edges.values())
+            .filter(edge => edge.a === nodeId || edge.b === nodeId)
+            .map(edge => (edge.a === nodeId ? edge.b : edge.a))
+            .filter(neighborId => {
+                const neighborNode = graph.nodes.get(neighborId);
+                if (!neighborNode) return false;
+                const isBorderNode = neighborNode.meta.roles.functionalRoles.some(r => r.includes('border'));
+                const isCenter = neighborNode.meta.roles.orientation.includes('centered');
+                return !isBorderNode && !isCenter;
+            });
+
+        if (neighbors.length < 5) return; // arbitrary at least 3
+
+        // Create new nodes interpolated between the original node and each neighbor
+        const newNodeIds: string[] = [];
+        for (let i = 0; i < neighbors.length; i++) {
+            const neighborId = neighbors[i];
+            const neighborNode = graph.nodes.get(neighborId);
+            if (!neighborNode) continue;
+
+            const newNodeId = `${nodeId}-H-${i}`;
+            newNodeIds.push(newNodeId);
+
+            // Interpolate position
+            const newX = (node.x + neighborNode.x) / 2;
+            const newY = (node.y + neighborNode.y) / 2;
+            const newAngle = neighborNode.angle; // or some other logic to determine angle
+
+            graph.addNode({
+                id: newNodeId,
+                x: newX,
+                y: newY,
+                angle: newAngle,
+                parentId: node.parentId,
+                meta: {
+                    generation: node.meta.generation + 1,
+                    roles: {
+                        orientation: 'not-center',
+                        ordinality: 'middle',
+                        functionalRoles: ['derived', 'hole-joint'],
+                        modRoles: []
+                    }
+                }
+            });
+
+            // Connect new node to the neighbor it should also get labeled as 'hole-seg' and 'derived2' in its edge roles
+            const edgeRoles: EdgeRoles = {
+                orientation: 'not-center',
+                ordinality: 'middle',
+                functionalRoles: ['derived', 'hole-seg'],
+                modRoles: []
+            };
+
+            graph.addEdge({
+                id: `${newNodeId}-${neighborId}`,
+                a: newNodeId,
+                b: neighborId,
+                meta: {
+                    roles: edgeRoles,
+                    generation: node.meta.generation + 1,
+                    siblingCount: 1,
+                    siblingIndex: 0
+                }
+            });
+            this.connectNeighbor(graph, newNodeId, neighborId);
+
+            // Connect new nodes in a ring
+            if (i > 0) {
+                const prevNewNodeId = newNodeIds[i - 1];
+                this.connectNeighbor(graph, prevNewNodeId, newNodeId, {
+                    orientation: 'not-center',
+                    ordinality: 'middle',
+                    functionalRoles: ['derived', 'hole-seg'],
+                    modRoles: []
+                });
+            }
+            // Connect the last new node to the first new node to complete the ring
+            if (i === neighbors.length - 1 && newNodeIds.length > 1) {
+                const firstNewNodeId = newNodeIds[0];
+                this.connectNeighbor(graph, newNodeId, firstNewNodeId);
+            }
+            // delete the original node and its edges
+            graph.nodes.delete(nodeId);
+            for (const neighborId of neighbors) {
+                const edgeId = `${nodeId}-${neighborId}`;
+                graph.edges.delete(edgeId);
+            }
+        }
     }
 }

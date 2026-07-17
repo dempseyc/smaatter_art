@@ -5,6 +5,7 @@ import { SvgRenderer } from './render/SvgRenderer';
 import { Toolbar } from './components/Toolbar';
 import { Inspector } from './components/Inspector';
 import { Pipeline } from './pipeline/Pipeline';
+import type { GraphSnapshot } from './graph/GraphSnapshot';
 
 export type LayoutMode = 'force' | 'circle' | 'grid' | 'breadthfirst' | 'concentric' | 'random' | 'kamada' | 'smatter';
 
@@ -12,6 +13,8 @@ function App() {
     const [graph, setGraph] = useState<Graph>(() => new Graph());
     const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
     const [positionedGraph, setPositionedGraph] = useState<Graph>(() => new Graph());
+    const [_snapshotBefore, setSnapshotBefore] = useState<GraphSnapshot | null>(null);
+    const [_snapshotAfter, setSnapshotAfter] = useState<GraphSnapshot | null>(null);
 
 
     const layout = useMemo(() => {
@@ -34,6 +37,15 @@ function App() {
         return new GraphLayoutEngine(algorithm, { width: 734, height: 734 });
     }, [layoutMode]);
 
+
+    const runAnalysisPass = () => {
+        const result = Pipeline.runFullAnalysis(graph, 734);
+        setSnapshotBefore(result.snapshots[0]);
+        setSnapshotAfter(result.snapshots[2]);
+        setGraph(result.graph);
+        setPositionedGraph(result.graph.clone());
+    };
+
     useMemo(() => {
         const fullGraph = Pipeline.generateInitialGraph(layout);
         setGraph(fullGraph);
@@ -46,14 +58,9 @@ function App() {
         setPositionedGraph(newGraph.clone());
     };
 
-    const runAnalysisPass = () => {
-        const nextGraph = Pipeline.runFullAnalysis(graph, 734);
-        setGraph(nextGraph);
-        setPositionedGraph(nextGraph.clone());
-    };
-
     const rerunLayout = () => {
         setGraph((current) => current.clone());
+        runAnalysisPass();
     };
 
     const exportSvg = () => {

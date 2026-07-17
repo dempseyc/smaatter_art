@@ -57,9 +57,13 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
                     return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={edgeCSSclasses(edge)} />;
                 })}
                 {Array.from(graph.nodes.values()).map((node) => (
-                    <g key={node.id}>
-                        <circle cx={node.x} cy={node.y} r={node.meta.generation === 2 ? "10" : node.meta.generation > 2 ? "5" : "20"} className={nodeCSSclasses(node)} />
-                        <text x={node.x} y={node.y + 4} className={`${node.id} label`} textAnchor="middle" fill="white">                        </text>
+                    <g key={node.id} transform={`translate(${node.x}, ${node.y}) rotate(${((node.angle * 180) / Math.PI) - 90})`}>
+                        {(() => {
+                            const gen = node.meta?.generation ?? 3;
+                            const s = Math.max(3, 20 - gen * 4);
+                            return <polygon points={`${-s},${-s} ${s * 1.6},0 ${-s},${s}`} className={nodeCSSclasses(node)} />;
+                        })()}
+                        <text x={0} y={4} className={`${node.id} label`} textAnchor="middle" fill="white"></text>
                     </g>
                 ))}
             </svg>

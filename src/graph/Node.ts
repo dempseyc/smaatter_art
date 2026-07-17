@@ -7,6 +7,9 @@ export interface Node {
     x: number;
     y: number;
     angle: number;
+    /** Weighted target position set from the post-mutation snapshot. Used by layout algorithms. */
+    targetX?: number;
+    targetY?: number;
     parentId: string;
     meta: {
         roles: NodeRoles;
@@ -21,6 +24,8 @@ export class NodeRecord implements Node {
     x: number;
     y: number;
     angle: number;
+    targetX?: number;
+    targetY?: number;
     parentId;
     meta: {
         roles: NodeRoles;
@@ -34,6 +39,8 @@ export class NodeRecord implements Node {
         this.x = data.x ?? 0;
         this.y = data.y ?? 0;
         this.angle = data.angle ?? 0;
+        this.targetX = data.targetX;
+        this.targetY = data.targetY;
         this.parentId = '';
         this.meta = {
             roles: data.meta?.roles ?? { functionalRoles: ['point'], modRoles: ['odd'], orientation: 'centered', ordinality: 'middle' } as NodeRoles,
