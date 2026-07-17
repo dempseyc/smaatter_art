@@ -58,10 +58,8 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
                 })}
                 {Array.from(graph.nodes.values()).map((node) => (
                     <g key={node.id}>
-                        <circle cx={node.x} cy={node.y} r="10" className={nodeCSSclasses(node)} />
-                        <text x={node.x} y={node.y + 4} className="label" textAnchor="middle" fill="white">
-                            {node.id}
-                        </text>
+                        <circle cx={node.x} cy={node.y} r={node.meta.generation === 2 ? "10" : node.meta.generation > 2 ? "5" : "20"} className={nodeCSSclasses(node)} />
+                        <text x={node.x} y={node.y + 4} className={`${node.id} label`} textAnchor="middle" fill="white">                        </text>
                     </g>
                 ))}
             </svg>

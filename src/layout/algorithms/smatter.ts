@@ -18,25 +18,36 @@ export function runSmatter(graphologyGraph: Graphology, width: number, height: n
     ) => {
         visited.add(nodeId);
 
-        // The angle given by GraphGenerator.ts for this node
-        const localAngle = (graphologyGraph.getNodeAttribute(nodeId, 'angle') as number) ?? 0;
+        const roles = (graphologyGraph.getNodeAttribute(nodeId, 'meta') as any)?.roles;
+        const functionalRoles = roles?.functionalRoles || [];
+        const isDerived = functionalRoles.includes('derived') || functionalRoles.includes('derived2');
 
-        // The total angle branching out is the parent's angle + this child's local angle offset
-        const totalAngle = accumulatedAngle + localAngle;
+        let totalAngle: number;
 
-        // Save it back to the node in case we want it for drawing/reference later
-        graphologyGraph.setNodeAttribute(nodeId, 'angle', totalAngle);
+        if (isDerived) {
+            // Derived nodes already have their absolute global geometry calculated by Analyzer/mergeNodes
+            totalAngle = (graphologyGraph.getNodeAttribute(nodeId, 'angle') as number) ?? 0;
+        } else {
+            // The angle given by GraphGenerator.ts for this node
+            const localAngle = (graphologyGraph.getNodeAttribute(nodeId, 'angle') as number) ?? 0;
 
-        // depth 0 is root, distance from center is 0. 
-        // depth > 0 is branch, length gets smaller by dividing by depth
-        const radius = depth === 0 ? 0 : radiusBase / depth;
+            // The total angle branching out is the parent's angle + this child's local angle offset
+            totalAngle = accumulatedAngle + localAngle;
 
-        const parentX = parentId !== null ? graphologyGraph.getNodeAttribute(parentId, 'x') as number : centerX;
-        const parentY = parentId !== null ? graphologyGraph.getNodeAttribute(parentId, 'y') as number : centerY;
+            // Save it back to the node in case we want it for drawing/reference later
+            graphologyGraph.setNodeAttribute(nodeId, 'angle', totalAngle);
 
-        // turn 90deg, start 0 at inside
-        graphologyGraph.setNodeAttribute(nodeId, 'x', parentX + (Math.cos(totalAngle + Math.PI / 2) * radius));
-        graphologyGraph.setNodeAttribute(nodeId, 'y', parentY + (Math.sin(totalAngle + Math.PI / 2) * radius));
+            // depth 0 is root, distance from center is 0. 
+            // depth > 0 is branch, length gets smaller by dividing by depth
+            const radius = depth === 0 ? 0 : radiusBase / depth;
+
+            const parentX = parentId !== null ? graphologyGraph.getNodeAttribute(parentId, 'x') as number : centerX;
+            const parentY = parentId !== null ? graphologyGraph.getNodeAttribute(parentId, 'y') as number : centerY;
+
+            // turn 90deg, start 0 at inside
+            graphologyGraph.setNodeAttribute(nodeId, 'x', parentX + (Math.cos(totalAngle + Math.PI / 2) * radius));
+            graphologyGraph.setNodeAttribute(nodeId, 'y', parentY + (Math.sin(totalAngle + Math.PI / 2) * radius));
+        }
 
         // Only traverse outward to true children (not sibling-chain links).
         // Since child IDs are formatted like "N0", "N1" from root "0", 
@@ -81,6 +92,12 @@ export function runSmatter(graphologyGraph: Graphology, width: number, height: n
         const functionalRoles = roles?.functionalRoles || [];
         const isBorder = functionalRoles.includes('border') || (nodeId.startsWith('BC-')) || (nodeId.startsWith('B-'));
         const isTerminal = functionalRoles.includes('terminal') || (nodeId.startsWith('T-'));
+        const isDerived = functionalRoles.includes('derived') || functionalRoles.includes('derived2');
+
+        if (isDerived) {
+            // Do not override derived nodes created by Analyzer pipeline operations
+            return;
+        }
 
         if (isBorder || isTerminal) {
             // These nodes have their global angle encoded directly from GraphGenerator

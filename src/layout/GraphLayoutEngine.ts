@@ -45,6 +45,7 @@ export class GraphLayoutEngine implements LayoutEngine {
                 y: node?.y ?? centerY,
                 angle: node?.angle ?? 0,
                 generation: node?.meta.generation ?? 0,
+                meta: node?.meta
             });
         });
 

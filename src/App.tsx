@@ -1,16 +1,18 @@
 import { useMemo, useState } from 'react';
 import { Graph } from './graph/Graph';
-import { GraphGenerator } from './graph/GraphGenerator';
 import { GraphLayoutEngine } from './layout/GraphLayoutEngine';
 import { SvgRenderer } from './render/SvgRenderer';
 import { Toolbar } from './components/Toolbar';
 import { Inspector } from './components/Inspector';
+import { Pipeline } from './pipeline/Pipeline';
 
 export type LayoutMode = 'force' | 'circle' | 'grid' | 'breadthfirst' | 'concentric' | 'random' | 'kamada' | 'smatter';
 
 function App() {
-    const [graph, setGraph] = useState<Graph>(() => GraphGenerator.generateGraph());
-    const [layoutMode, setLayoutMode] = useState<LayoutMode>('force');
+    const [graph, setGraph] = useState<Graph>(() => new Graph());
+    const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
+    const [positionedGraph, setPositionedGraph] = useState<Graph>(() => new Graph());
+
 
     const layout = useMemo(() => {
         const algorithm = layoutMode === 'circle'
@@ -32,14 +34,22 @@ function App() {
         return new GraphLayoutEngine(algorithm, { width: 734, height: 734 });
     }, [layoutMode]);
 
-    const positionedGraph = useMemo(() => {
-        const next = graph.clone();
-        layout.apply(next);
-        return next;
-    }, [graph, layout]);
+    useMemo(() => {
+        const fullGraph = Pipeline.generateInitialGraph(layout);
+        setGraph(fullGraph);
+        setPositionedGraph(fullGraph.clone());
+    }, [layout]);
 
     const randomize = () => {
-        setGraph(GraphGenerator.generateGraph());
+        const newGraph = Pipeline.generateInitialGraph(layout);
+        setGraph(newGraph);
+        setPositionedGraph(newGraph.clone());
+    };
+
+    const runAnalysisPass = () => {
+        const nextGraph = Pipeline.runFullAnalysis(graph, layout, 734);
+        setGraph(nextGraph);
+        setPositionedGraph(nextGraph.clone());
     };
 
     const rerunLayout = () => {
@@ -74,6 +84,7 @@ function App() {
         link.href = url;
         link.download = 'smatter-art-graph.svg';
         document.body.appendChild(link);
+
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
@@ -82,7 +93,7 @@ function App() {
     return (
         <div style={{ display: 'flex', minHeight: '100vh', background: '#111', color: '#f4f4f4', fontFamily: 'Inter, sans-serif' }}>
             <aside style={{ width: 260, padding: 20, borderRight: '1px solid #2a2a2a', background: '#181818' }}>
-                <Toolbar layoutMode={layoutMode} onLayoutChange={setLayoutMode} onRandomize={randomize} onRerunLayout={rerunLayout} onExportSvg={exportSvg} />
+                <Toolbar layoutMode={layoutMode} onLayoutChange={setLayoutMode} onRandomize={randomize} onRerunLayout={rerunLayout} onExportSvg={exportSvg} onAnalysisPass={runAnalysisPass} />
                 <Inspector graph={positionedGraph} />
             </aside>
             <main style={{ flex: 1, padding: 24 }}>

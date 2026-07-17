@@ -45,3 +45,16 @@
     stroke: yellow;
     stroke-width: 3px;
 }
+
+.terminal {
+    fill: black;
+    stroke: white;
+}
+
+.derived {
+    stroke: white;
+}
+
+.derived2 {
+    stroke: cyan;
+}

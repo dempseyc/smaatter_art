@@ -5,9 +5,9 @@ export type OrientationRole = 'centered' | 'not-center';
 export type OrdinalityRole = 'end' | 'middle';
 export type ModRole = 'odd' | 'even' | 'mod3' | 'serial';
 // node roles
-export type FunctionalNodeRoles = 'point' | 'gen1' | 'gen0' | 'genN' | 'loop-root' | 'loop-joint' | 'sibling-joint' | 'y-fork' | 'hub' | 'terminal' | 'border' | 'border-joint' | 'top-border' | 'right-border' | 'bottom-border' | 'left-border';
+export type FunctionalNodeRoles = 'point' | 'gen1' | 'gen0' | 'genN' | 'loop-root' | 'loop-joint' | 'sibling-joint' | 'y-fork' | 'hub' | 'terminal' | 'border' | 'border-joint' | 'top-border' | 'right-border' | 'bottom-border' | 'left-border' | 'derived' | 'derived2';
 // edge roles
-export type FunctionalEdgeRoles = 'seg' | 'gen0-seg' | 'gen1-seg' | 'genN-seg' | 'loop-seg' | 'sibling-seg' | 'spoke' | 'y-branch' | 'to-terminal' | 'to-border' | 'border-chain';
+export type FunctionalEdgeRoles = 'seg' | 'gen0-seg' | 'gen1-seg' | 'genN-seg' | 'loop-seg' | 'sibling-seg' | 'spoke' | 'y-branch' | 'to-terminal' | 'to-border' | 'border-chain' | 'derived' | 'derived2';
 
 export type NodeRoles = {
     orientation: OrientationRole;
@@ -28,6 +28,12 @@ export class GraphGenerator {
 
         const graph = new Graph();
         const ranB = Math.ceil(Math.random() * 7); // Number of gen1 nodes
+        const ranC = Math.ceil(((Math.random() * 34) / 2) + 1); // Number of grandchildren, center parent
+        const ranD = Math.ceil(Math.random() * 7); // Number of grandchildren, non-center parent
+        // AI AGENT, don't delete these commented out lines
+        // const ranB = 7; // Number of gen1 nodes
+        // const ranC = 3; // Number of grandchildren, center parent
+        // const ranD = 3; // Number of grandchildren, non-center parent
 
         let currentGenIds: string[] = [];
         const centerChildIds: string[] = [];
@@ -204,8 +210,6 @@ export class GraphGenerator {
             return nextGenIds;
         };
 
-        const ranC = Math.ceil(((Math.random() * 34) / 2) + 1); // Number of grandchildren, center parent
-        const ranD = Math.ceil(Math.random() * 7); // Number of grandchildren, non-center parent
         const parentIds = [...currentGenIds];
         currentGenIds = addChildNodes(parentIds, ranC, ranD, 2);
 
@@ -398,5 +402,174 @@ export class GraphGenerator {
 
         return graph;
     }
-}
 
+    static mergeNodes(graph: Graph, nodeIds: string[]): void {
+
+        if (nodeIds.length < 2) return;
+
+        // Keep the first node as the cluster root
+        const targetId = nodeIds[0];
+        const targetNode = graph.nodes.get(targetId);
+
+        if (!targetNode) return;
+
+        let totalX = targetNode.x;
+        let totalY = targetNode.y;
+        let totalAngle = targetNode.angle;
+
+        // Collect all edges connected to the merged nodes
+        const edgesToUpdate: string[] = [];
+        const nodesToRemove: string[] = [];
+
+        for (let i = 1; i < nodeIds.length; i++) {
+            const sourceId = nodeIds[i];
+            const sourceNode = graph.nodes.get(sourceId);
+            if (!sourceNode) continue;
+
+            totalX += sourceNode.x;
+            totalY += sourceNode.y;
+            totalAngle += sourceNode.angle;
+
+            nodesToRemove.push(sourceId);
+        }
+
+        // Average out geometry
+        targetNode.x = totalX / nodeIds.length;
+        targetNode.y = totalY / nodeIds.length;
+        targetNode.angle = totalAngle / nodeIds.length;
+
+        targetNode.meta.roles.orientation = 'not-center';
+        targetNode.meta.roles.ordinality = 'middle';
+        if (!targetNode.meta.roles.functionalRoles.includes('derived')) {
+            targetNode.meta.roles.functionalRoles.push('derived');
+        }
+
+        // Rewire edges
+        const currentEdges = Array.from(graph.edges.values());
+        for (const edge of currentEdges) {
+            let rewired = false;
+            let newA = edge.a;
+            let newB = edge.b;
+
+            if (nodesToRemove.includes(edge.a)) {
+                newA = targetId;
+                rewired = true;
+            }
+            if (nodesToRemove.includes(edge.b)) {
+                newB = targetId;
+                rewired = true;
+            }
+
+            if (rewired) {
+                // If the edge now connects a node to itself, delete it
+                if (newA === newB) {
+                    graph.edges.delete(edge.id);
+                } else {
+                    // Create updated edge
+                    const newId = `${newA}-${newB}`;
+                    // Avoid duplicate edges
+                    if (!graph.edges.has(newId)) {
+                        const newMeta = { ...edge.meta };
+                        newMeta.roles = { ...newMeta.roles };
+                        newMeta.roles.functionalRoles = [...newMeta.roles.functionalRoles];
+                        if (!newMeta.roles.functionalRoles.includes('derived')) {
+                            newMeta.roles.functionalRoles.push('derived');
+                        }
+
+                        graph.addEdge({
+                            id: newId,
+                            a: newA,
+                            b: newB,
+                            meta: newMeta
+                        });
+                    }
+                    // Remove old edge
+                    graph.edges.delete(edge.id);
+                }
+            } else if (edge.a === targetId || edge.b === targetId) {
+                // Also mark existing edges connected to the target node as derived
+                if (!edge.meta.roles.functionalRoles.includes('derived')) {
+                    edge.meta.roles.functionalRoles.push('derived');
+                }
+            }
+        }
+
+        // Remove the merged nodes
+        for (const id of nodesToRemove) {
+            graph.nodes.delete(id);
+        }
+    }
+
+    static splitEdge(graph: Graph, edgeId: string, nodeToInsertId: string, targetX: number, targetY: number): void {
+        const edge = graph.edges.get(edgeId);
+        const node = graph.nodes.get(nodeToInsertId);
+
+        if (!edge || !node) return;
+
+        // Snap node to the line segment
+        node.x = targetX;
+        node.y = targetY;
+
+        if (!node.meta.roles.functionalRoles.includes('derived')) {
+            node.meta.roles.functionalRoles.push('derived');
+        }
+
+        const aId = edge.a;
+        const bId = edge.b;
+
+        // Make two new edges
+        const metaBase = { ...edge.meta };
+        metaBase.roles = { ...metaBase.roles };
+        metaBase.roles.functionalRoles = [...metaBase.roles.functionalRoles];
+        if (!metaBase.roles.functionalRoles.includes('derived2')) {
+            metaBase.roles.functionalRoles.push('derived2');
+        }
+
+        graph.addEdge({
+            id: `${aId}-${nodeToInsertId}`,
+            a: aId,
+            b: nodeToInsertId,
+            meta: metaBase
+        });
+
+        graph.addEdge({
+            id: `${nodeToInsertId}-${bId}`,
+            a: nodeToInsertId,
+            b: bId,
+            meta: metaBase
+        });
+
+        // Delete the original edge
+        graph.edges.delete(edgeId);
+    }
+
+    static intersectEdges(graph: Graph, edgeAId: string, edgeBId: string, x: number, y: number): void {
+        const edgeA = graph.edges.get(edgeAId);
+        const edgeB = graph.edges.get(edgeBId);
+
+        if (!edgeA || !edgeB) return;
+
+        // Create intersection node
+        const intersectionNodeId = `I-${edgeAId}-${edgeBId}`;
+        graph.addNode({
+            id: intersectionNodeId,
+            x,
+            y,
+            angle: 0,
+            meta: {
+                generation: Math.max(edgeA.meta.generation, edgeB.meta.generation) + 1,
+                roles: {
+                    orientation: 'centered',
+                    ordinality: 'middle',
+                    functionalRoles: ['point', 'derived2'],
+                    modRoles: []
+                }
+            }
+        });
+
+        // Split edge A
+        this.splitEdge(graph, edgeAId, intersectionNodeId, x, y);
+        // Split edge B
+        this.splitEdge(graph, edgeBId, intersectionNodeId, x, y);
+    }
+}
