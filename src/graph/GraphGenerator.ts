@@ -572,4 +572,37 @@ export class GraphGenerator {
         // Split edge B
         this.splitEdge(graph, edgeBId, intersectionNodeId, x, y);
     }
+
+    static connectNeighbor(graph: Graph, sourceId: string, targetId: string): void {
+        // Create an edge between two neighbor nodes
+        const edgeId = `${sourceId}-${targetId}`;
+
+        // Avoid creating duplicate edges
+        if (graph.edges.has(edgeId)) {
+            return;
+        }
+
+        // Get generation from source node if available
+        const sourceNode = graph.nodes.get(sourceId);
+        const generation = sourceNode?.meta.generation ?? 0;
+
+        const edgeRoles: EdgeRoles = {
+            orientation: 'not-center',
+            ordinality: 'middle',
+            functionalRoles: ['derived'],
+            modRoles: []
+        };
+
+        graph.addEdge({
+            id: edgeId,
+            a: sourceId,
+            b: targetId,
+            meta: {
+                roles: edgeRoles,
+                generation: generation,
+                siblingCount: 1,
+                siblingIndex: 0
+            }
+        });
+    }
 }

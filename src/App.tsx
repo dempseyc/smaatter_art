@@ -47,7 +47,7 @@ function App() {
     };
 
     const runAnalysisPass = () => {
-        const nextGraph = Pipeline.runFullAnalysis(graph, layout, 734);
+        const nextGraph = Pipeline.runFullAnalysis(graph, 734);
         setGraph(nextGraph);
         setPositionedGraph(nextGraph.clone());
     };

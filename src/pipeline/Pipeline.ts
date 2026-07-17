@@ -10,12 +10,12 @@ export class Pipeline {
         return graph;
     }
 
-    static runFullAnalysis(graph: Graph, layoutEngine: GraphLayoutEngine, width: number): Graph {
+    static runFullAnalysis(graph: Graph, width: number): Graph {
         let currentGraph = graph.clone();
 
         let needsAnotherPass = true;
         let iteration = 0;
-        const maxIterations = 10;
+        const maxIterations = 50;
 
         let mergePhaseComplete = false;
 
@@ -36,15 +36,17 @@ export class Pipeline {
             }
 
             if (mergePhaseComplete) {
-                ops.push(
+                const intersectOps = [
                     ...Analyser.findEdgeProximities(currentGraph, width),
                     ...Analyser.findEdgeIntersections(currentGraph)
-                );
+                ];
 
-                // Any edge split or intersection operations reset the phase
-                // so we go back to checking for merges before splitting any further
-                if (ops.length > 0) {
+                if (intersectOps.length > 0) {
+                    ops.push(...intersectOps);
                     mergePhaseComplete = false;
+                } else {
+                    // Only find border connections when ALL merges AND intersections are fully stabilized
+                    ops.push(...Analyser.findBorderConnections(currentGraph, width));
                 }
             }
 
@@ -97,13 +99,18 @@ export class Pipeline {
                         modifiedEntities.add(op.edgeB);
                         // Force layout update after geometry generation
                         needsAnotherPass = true;
+                    } else if (op.type === 'connect-neighbor') {
+                        GraphGenerator.connectNeighbor(currentGraph, op.sourceId, op.targetId);
+                        needsAnotherPass = true;
+                        // New border edges may bring nodes close enough to merge —
+                        // reset so the merge phase runs before the next border pass.
+                        mergePhaseComplete = false;
                     }
                 }
 
-                // If graph topology changed, re-run layout geometry calculations
-                if (needsAnotherPass) {
-                    layoutEngine.apply(currentGraph);
-                }
+                // Positions are derived directly from node coordinates by the mutation
+                // functions (splitEdge, intersectEdges, mergeNodes). Layout is not re-run
+                // here so those precise placements are preserved across iterations.
             }
 
             iteration++;

@@ -25,7 +25,13 @@ export type IntersectionOperation = {
     targetY: number;
 };
 
-export type GraphOperation = MergeOperation | ExpandOperation | EdgeSplitOperation | IntersectionOperation;
+export type ConnectNeighborOperation = {
+    type: 'connect-neighbor';
+    sourceId: NodeId;
+    targetId: NodeId;
+};
+
+export type GraphOperation = MergeOperation | ExpandOperation | EdgeSplitOperation | IntersectionOperation | ConnectNeighborOperation;
 
 export class Analyser {
     /**
@@ -39,9 +45,15 @@ export class Analyser {
         const nodes = Array.from(graph.nodes.values());
         const visited = new Set<NodeId>();
 
+        const isMutable = (roles: string[]) => !roles.some(r =>
+            r === 'border' || r === 'border-joint' || r === 'terminal'
+        );
+
         for (let i = 0; i < nodes.length; i++) {
             const nodeA = nodes[i];
             if (visited.has(nodeA.id)) continue;
+            // Border/terminal nodes are position references only — never mutate them
+            if (!isMutable(nodeA.meta.roles.functionalRoles)) continue;
 
             const cluster = [nodeA.id];
             visited.add(nodeA.id);
@@ -49,22 +61,28 @@ export class Analyser {
             for (let j = i + 1; j < nodes.length; j++) {
                 const nodeB = nodes[j];
                 if (visited.has(nodeB.id)) continue;
+                if (!isMutable(nodeB.meta.roles.functionalRoles)) continue;
 
                 const dx = nodeA.x - nodeB.x;
                 const dy = nodeA.y - nodeB.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
                 if (dist < threshold) {
-                    // Make sure they are not directly connected neighbors
-                    const hasEdge = Array.from(graph.edges.values()).some(e =>
-                        (e.a === nodeA.id && e.b === nodeB.id) ||
-                        (e.a === nodeB.id && e.b === nodeA.id)
-                    );
-
-                    if (!hasEdge) {
-                        cluster.push(nodeB.id);
-                        visited.add(nodeB.id);
+                    // Coincident nodes (dist ≈ 0) must always merge — they form a degenerate
+                    // zero-length edge when splitEdge connects them, so hasEdge would be true
+                    // even though they are the same physical point.
+                    const coincident = dist < 1;
+                    if (!coincident) {
+                        // For non-coincident close nodes, skip directly connected neighbors
+                        const hasEdge = Array.from(graph.edges.values()).some(e =>
+                            (e.a === nodeA.id && e.b === nodeB.id) ||
+                            (e.a === nodeB.id && e.b === nodeA.id)
+                        );
+                        if (hasEdge) continue;
                     }
+
+                    cluster.push(nodeB.id);
+                    visited.add(nodeB.id);
                 }
             }
 
@@ -132,6 +150,10 @@ export class Analyser {
             for (const node of nodes) {
                 // Don't check the edge's own endpoints
                 if (node.id === nodeA.id || node.id === nodeB.id) continue;
+                // Border/terminal nodes are position references only — don't use them to split edges
+                if (node.meta.roles.functionalRoles.some(r =>
+                    r === 'border' || r === 'border-joint' || r === 'terminal'
+                )) continue;
 
                 const result = pointToSegmentDistance(
                     node.x, node.y,
@@ -244,6 +266,69 @@ export class Analyser {
                         });
                         break;
                     }
+                }
+            }
+        }
+
+        return ops;
+    }
+    /**
+     * Finds border-joint nodes and finds the nearest neighbor inside the border 
+     * to connect to if an edge doesn't already exist. Supports equidistant targets.
+     */
+    static findBorderConnections(graph: Graph, layoutWidth: number): ConnectNeighborOperation[] {
+        const ops: ConnectNeighborOperation[] = [];
+        const nodes = Array.from(graph.nodes.values());
+
+        // Find all border-joint nodes
+        const borderJoints = nodes.filter(n => n.meta.roles.functionalRoles.includes('border-joint'));
+        if (borderJoints.length === 0) return ops;
+
+        // Max connection distance
+        const maxDist = layoutWidth / 4;
+
+        for (const joint of borderJoints) {
+            let nearestNodes: NodeId[] = [];
+            let minDistance = Infinity;
+
+            // Define a small tolerance for floating point "equidistant" checks
+            const EPSILON = 2.0;
+
+            for (const node of nodes) {
+                // Don't connect to other borders/terminals, we want interior structure nodes
+                const isBorderNode = node.meta.roles.functionalRoles.some(r => r.includes('border'));
+                const isTerminal = node.meta.roles.functionalRoles.includes('terminal');
+                if (node.id === joint.id || isBorderNode || isTerminal) continue;
+
+                const dx = node.x - joint.x;
+                const dy = node.y - joint.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist > maxDist) continue;
+
+                if (dist < minDistance - EPSILON) {
+                    // We found a definitively closer node, reset the array
+                    minDistance = dist;
+                    nearestNodes = [node.id];
+                } else if (Math.abs(dist - minDistance) <= EPSILON) {
+                    // We found a node that is practically equidistant
+                    nearestNodes.push(node.id);
+                }
+            }
+
+            for (const targetNodeId of nearestNodes) {
+                // Verify edge doesn't already exist
+                const hasEdge = Array.from(graph.edges.values()).some(e =>
+                    (e.a === joint.id && e.b === targetNodeId) ||
+                    (e.a === targetNodeId && e.b === joint.id)
+                );
+
+                if (!hasEdge) {
+                    ops.push({
+                        type: 'connect-neighbor',
+                        sourceId: joint.id,
+                        targetId: targetNodeId
+                    });
                 }
             }
         }
