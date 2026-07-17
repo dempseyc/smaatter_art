@@ -13,11 +13,6 @@
     fill: red;
 }
 
-.edge {
-    stroke: grey;
-    stroke-width: 2px;
-}
-
 /* .lefthand {
     stroke: green;
     stroke-width: 3px;
@@ -57,4 +52,10 @@
 
 .derived2 {
     stroke: cyan;
+}
+
+
+.edge {
+    stroke: black;
+    stroke-width: 2px;
 }

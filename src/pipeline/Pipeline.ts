@@ -1,5 +1,5 @@
 import { Graph } from '../graph/Graph';
-import { Analyser, GraphOperation } from './Analyser';
+import { Analyser } from './Analyser';
 import { GraphGenerator } from '../graph/GraphGenerator';
 import { GraphLayoutEngine } from '../layout/GraphLayoutEngine';
 
@@ -10,110 +10,92 @@ export class Pipeline {
         return graph;
     }
 
+    /** Repeatedly merges close/coincident nodes until the graph is fully stable. */
+    private static runMerges(graph: Graph, width: number): boolean {
+        let anyMerged = false;
+        let found = true;
+        while (found) {
+            const ops = Analyser.findMergeableNodes(graph, width);
+            if (ops.length === 0) { found = false; break; }
+            const modified = new Set<string>();
+            for (const op of ops) {
+                if (op.nodes.some(n => modified.has(n))) continue;
+                GraphGenerator.mergeNodes(graph, op.nodes);
+                op.nodes.forEach(n => modified.add(n));
+                anyMerged = true;
+            }
+        }
+        return anyMerged;
+    }
+
+    /** One pass of edge proximity snapping and edge intersection splitting. */
+    private static runIntersections(graph: Graph, width: number): boolean {
+        const ops = [
+            ...Analyser.findEdgeProximities(graph, width),
+            ...Analyser.findEdgeIntersections(graph),
+        ];
+        if (ops.length === 0) return false;
+
+        const modified = new Set<string>();
+        for (const op of ops) {
+            if (op.type === 'split-edge') {
+                if (modified.has(op.edgeId)) continue;
+                const edge = graph.edges.get(op.edgeId);
+                if (!edge) continue;
+                const splitNodeId = `split-${op.edgeId}-${Math.random().toString(36).substring(2, 7)}`;
+                graph.addNode({
+                    id: splitNodeId,
+                    x: op.targetX,
+                    y: op.targetY,
+                    angle: 0,
+                    meta: {
+                        generation: edge.meta.generation + 1,
+                        roles: {
+                            orientation: 'centered',
+                            ordinality: 'middle',
+                            functionalRoles: ['point', 'derived2'],
+                            modRoles: [],
+                        },
+                    },
+                });
+                GraphGenerator.splitEdge(graph, op.edgeId, splitNodeId, op.targetX, op.targetY);
+                modified.add(op.edgeId);
+            } else if (op.type === 'intersect') {
+                if (modified.has(op.edgeA) || modified.has(op.edgeB)) continue;
+                GraphGenerator.intersectEdges(graph, op.edgeA, op.edgeB, op.targetX, op.targetY);
+                modified.add(op.edgeA);
+                modified.add(op.edgeB);
+            }
+        }
+        return true;
+    }
+
+    /** One pass of border-joint → nearest interior node connections. */
+    private static runBorderConnections(graph: Graph, width: number): boolean {
+        const ops = Analyser.findBorderConnections(graph, width);
+        if (ops.length === 0) return false;
+        for (const op of ops) {
+            GraphGenerator.connectNeighbor(graph, op.sourceId, op.targetId);
+        }
+        return true;
+    }
+
     static runFullAnalysis(graph: Graph, width: number): Graph {
-        let currentGraph = graph.clone();
+        const currentGraph = graph.clone();
+        const maxIterations = 25;
 
-        let needsAnotherPass = true;
-        let iteration = 0;
-        const maxIterations = 50;
+        for (let i = 0; i < maxIterations; i++) {
+            // Always merge first to a clean state
+            Pipeline.runMerges(currentGraph, width);
 
-        let mergePhaseComplete = false;
+            // If there is still geometry to resolve, loop back to merge again
+            if (Pipeline.runIntersections(currentGraph, width)) continue;
 
-        while (needsAnotherPass && iteration < maxIterations) {
-            needsAnotherPass = false;
+            // Geometry is stable — wire border connections, then re-merge
+            if (Pipeline.runBorderConnections(currentGraph, width)) continue;
 
-            const ops: GraphOperation[] = [];
-
-            // Do all merges first. Only start doing intersections when no more merges exist
-
-            if (!mergePhaseComplete) {
-                const mergeOps = Analyser.findMergeableNodes(currentGraph, width);
-                if (mergeOps.length > 0) {
-                    ops.push(...mergeOps);
-                } else {
-                    mergePhaseComplete = true;
-                }
-            }
-
-            if (mergePhaseComplete) {
-                const intersectOps = [
-                    ...Analyser.findEdgeProximities(currentGraph, width),
-                    ...Analyser.findEdgeIntersections(currentGraph)
-                ];
-
-                if (intersectOps.length > 0) {
-                    ops.push(...intersectOps);
-                    mergePhaseComplete = false;
-                } else {
-                    // Only find border connections when ALL merges AND intersections are fully stabilized
-                    ops.push(...Analyser.findBorderConnections(currentGraph, width));
-                }
-            }
-
-            if (ops.length > 0) {
-                // Keep track of modified edges/nodes in this pass so we don't apply multiple operations 
-                // to entities that no longer exist (e.g. edge was already split/deleted)
-                const modifiedEntities = new Set<string>();
-
-                // Apply operations to the graph
-                for (const op of ops) {
-                    if (op.type === 'merge') {
-                        // Check if any of the target nodes were already merged/split this pass
-                        if (op.nodes.some(n => modifiedEntities.has(n))) continue;
-
-                        GraphGenerator.mergeNodes(currentGraph, op.nodes);
-                        op.nodes.forEach(n => modifiedEntities.add(n));
-                        needsAnotherPass = true;
-                    } else if (op.type === 'split-edge') {
-                        if (modifiedEntities.has(op.edgeId)) continue;
-
-                        const edge = currentGraph.edges.get(op.edgeId);
-                        if (!edge) continue;
-                        const targetGen = edge.meta.generation + 1;
-
-                        // Generate a temporary unique ID for the node being snapped to the line
-                        const splitNodeId = `split-${op.edgeId}-${Math.random().toString(36).substring(2, 7)}`;
-                        currentGraph.addNode({
-                            id: splitNodeId,
-                            x: op.targetX,
-                            y: op.targetY,
-                            angle: 0,
-                            meta: {
-                                generation: targetGen, // derived
-                                roles: {
-                                    orientation: 'centered',
-                                    ordinality: 'middle',
-                                    functionalRoles: ['point', 'derived2'],
-                                    modRoles: []
-                                }
-                            }
-                        });
-                        GraphGenerator.splitEdge(currentGraph, op.edgeId, splitNodeId, op.targetX, op.targetY);
-                        modifiedEntities.add(op.edgeId);
-                        needsAnotherPass = true;
-                    } else if (op.type === 'intersect') {
-                        if (modifiedEntities.has(op.edgeA) || modifiedEntities.has(op.edgeB)) continue;
-
-                        GraphGenerator.intersectEdges(currentGraph, op.edgeA, op.edgeB, op.targetX, op.targetY);
-                        modifiedEntities.add(op.edgeA);
-                        modifiedEntities.add(op.edgeB);
-                        // Force layout update after geometry generation
-                        needsAnotherPass = true;
-                    } else if (op.type === 'connect-neighbor') {
-                        GraphGenerator.connectNeighbor(currentGraph, op.sourceId, op.targetId);
-                        needsAnotherPass = true;
-                        // New border edges may bring nodes close enough to merge —
-                        // reset so the merge phase runs before the next border pass.
-                        mergePhaseComplete = false;
-                    }
-                }
-
-                // Positions are derived directly from node coordinates by the mutation
-                // functions (splitEdge, intersectEdges, mergeNodes). Layout is not re-run
-                // here so those precise placements are preserved across iterations.
-            }
-
-            iteration++;
+            // Nothing left to do
+            break;
         }
 
         return currentGraph;
