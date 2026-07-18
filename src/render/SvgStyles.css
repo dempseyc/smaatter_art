@@ -52,11 +52,11 @@
     stroke: white;
 }
 
-.derived {
+.merged {
     stroke: white;
 }
 
-.derived2 {
+.split {
     stroke: cyan;
 }
 

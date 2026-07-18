@@ -18,11 +18,11 @@ export class Pipeline {
     }
 
     /** Repeatedly merges close/coincident nodes until the graph is fully stable. */
-    private static runMerges(graph: Graph, width: number): boolean {
+    private static runMerges(graph: Graph, threshold: number): boolean {
         let anyMerged = false;
         let found = true;
         while (found) {
-            const ops = Analyser.findMergeableNodes(graph, width);
+            const ops = Analyser.findMergeableNodes(graph, threshold);
             if (ops.length === 0) { found = false; break; }
             const modified = new Set<string>();
             for (const op of ops) {
@@ -60,12 +60,12 @@ export class Pipeline {
                         roles: {
                             orientation: 'centered',
                             ordinality: 'middle',
-                            functionalRoles: ['point', 'derived2'],
+                            functionalRoles: ['point', 'split'],
                             modRoles: [],
                         },
                     },
                 });
-                GraphGenerator.splitEdge(graph, op.edgeId, splitNodeId, op.targetX, op.targetY);
+                GraphGenerator.derivedEdge(graph, op.edgeId, splitNodeId, op.targetX, op.targetY);
                 modified.add(op.edgeId);
             } else if (op.type === 'intersect') {
                 if (modified.has(op.edgeA) || modified.has(op.edgeB)) continue;
@@ -107,7 +107,8 @@ export class Pipeline {
 
         for (let i = 0; i < maxIterations; i++) {
             // Always merge first to a clean state
-            Pipeline.runMerges(currentGraph, width);
+            Pipeline.runMerges(currentGraph, 15); // later make dynamic based on count of mergeRuns
+            Analyser.findTwins(currentGraph, width); // mark twins before running intersections, so that all future transformations remain symmetrical
 
             // If there is still geometry to resolve, loop back to merge again
             if (Pipeline.runIntersections(currentGraph, width)) continue;

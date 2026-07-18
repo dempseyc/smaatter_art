@@ -39,8 +39,7 @@ export class Analyser {
      * and recommends merging them into a single cluster node.
      * Distance threshold is based on layout geometry width/32
      */
-    static findMergeableNodes(graph: Graph, layoutWidth: number): MergeOperation[] {
-        const threshold = layoutWidth / 32;
+    static findMergeableNodes(graph: Graph, threshold: number = 15): MergeOperation[] {
         const ops: MergeOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
         const visited = new Set<NodeId>();
@@ -76,7 +75,8 @@ export class Analyser {
                         // For non-coincident close nodes, skip directly connected neighbors
                         const hasEdge = Array.from(graph.edges.values()).some(e =>
                             (e.a === nodeA.id && e.b === nodeB.id) ||
-                            (e.a === nodeB.id && e.b === nodeA.id)
+                            (e.a === nodeB.id && e.b === nodeA.id) &&
+                            e.meta.roles.functionalRoles.includes('border-chain') === false
                         );
                         if (hasEdge) continue;
                     }
@@ -92,6 +92,32 @@ export class Analyser {
         }
 
         return ops;
+    }
+
+    /**
+     * Finds twin nodes in the graph. Every graph that is not in center line x=0, will have one twin on the opposite side.
+     * if they are x=0 or very close to it, leave twinId as undefined. 
+     * if x is not exactly 0 for the non-twin, immediately set it to 0.
+    */
+    static findTwins(graph: Graph, layoutWidth: number): void {
+        const nodes = Array.from(graph.nodes.values());
+        let twinCount = 0;
+
+        for (const node of nodes) {
+            if (node.twinId) continue; // Skip nodes that already have a twin
+            if (Math.abs(node.x - layoutWidth / 2) < 1e-6) {
+                node.x = layoutWidth / 2; // Snap to center line if very close
+                continue; // Skip nodes that are near the center line
+            }
+
+            const twinNode = nodes.find(n => n.id !== node.id && Math.abs(n.x + node.x - layoutWidth) < 1 && Math.abs(n.y - node.y) < 1);
+
+            if (twinNode) {
+                node.twinId = twinNode.id;
+                twinNode.twinId = node.id;
+                twinCount++;
+            }
+        }
     }
 
     /**
@@ -347,14 +373,16 @@ export class Analyser {
             const isBorderNode = node.meta.roles.functionalRoles.some(r => r.includes('border'));
             const isTerminal = node.meta.roles.functionalRoles.includes('terminal');
             const isBorderJoint = node.meta.roles.functionalRoles.includes('border-joint');
-            if (isBorderNode || isTerminal || isBorderJoint) continue;
+            const isCentered = node.meta.roles.orientation.includes('centered');
+            if (isBorderNode || isTerminal || isBorderJoint || isCentered) continue;
 
             // border-chain edges must not be counted never
             // If the node has more than 5 edges, we consider it expandable
             const nonBorderEdges = Array.from(graph.edges.values()).filter(e => {
                 const isToBorder = e.meta.roles.functionalRoles.includes('to-border');
                 const isBorderEdge = e.meta.roles.functionalRoles.includes('border-chain');
-                return !isBorderEdge && !isToBorder && (e.a === node.id || e.b === node.id);
+                const isCentered = e.meta.roles.orientation.includes('centered');
+                return !isCentered && !isBorderEdge && !isToBorder && (e.a === node.id || e.b === node.id);
             });
             if (nonBorderEdges.length > 5) {
                 ops.push({ type: 'expand', nodeId: node.id });

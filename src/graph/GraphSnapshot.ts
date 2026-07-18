@@ -8,7 +8,7 @@ export interface NodeSnapshot {
     angle: number;
     targetX?: number;
     targetY?: number;
-    parentId: string;
+    parentId: string | undefined;
     meta: {
         roles: {
             orientation: OrientationRole;

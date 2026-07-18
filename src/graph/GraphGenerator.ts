@@ -6,9 +6,9 @@ export type OrientationRole = 'centered' | 'not-center';
 export type OrdinalityRole = 'end' | 'middle';
 export type ModRole = 'odd' | 'even' | 'mod3' | 'serial';
 // node roles
-export type FunctionalNodeRoles = 'point' | 'gen1' | 'gen0' | 'genN' | 'loop-root' | 'loop-joint' | 'sibling-joint' | 'hub' | 'terminal' | 'border' | 'border-joint' | 'top-border' | 'right-border' | 'bottom-border' | 'left-border' | 'derived' | 'derived2' | 'hole-joint';
+export type FunctionalNodeRoles = 'point' | 'gen1' | 'gen0' | 'genN' | 'loop-root' | 'loop-joint' | 'sibling-joint' | 'hub' | 'terminal' | 'border' | 'border-joint' | 'top-border' | 'right-border' | 'bottom-border' | 'left-border' | 'merged' | 'split' | 'hole-joint';
 // edge roles
-export type FunctionalEdgeRoles = 'seg' | 'gen0-seg' | 'gen1-seg' | 'genN-seg' | 'loop-seg' | 'sibling-seg' | 'spoke' | 'to-terminal' | 'to-border' | 'border-chain' | 'derived' | 'derived2' | 'hole-seg';
+export type FunctionalEdgeRoles = 'seg' | 'gen0-seg' | 'gen1-seg' | 'genN-seg' | 'loop-seg' | 'sibling-seg' | 'spoke' | 'to-terminal' | 'to-border' | 'border-chain' | 'merged' | 'split' | 'hole-seg';
 
 export type NodeRoles = {
     orientation: OrientationRole;
@@ -29,8 +29,8 @@ export class GraphGenerator {
 
         const graph = new Graph();
         const ranB = Math.ceil(Math.random() * 7); // Number of gen1 nodes
-        const ranC = Math.ceil(((Math.random() * 34) / 2) + 1); // Number of grandchildren, center parent
-        const ranD = Math.ceil(Math.random() * 7); // Number of grandchildren, non-center parent
+        const ranC = Math.ceil(((Math.random() * 24) / 2) + 1); // Number of grandchildren, center parent
+        const ranD = Math.ceil(Math.random() * 12); // Number of grandchildren, non-center parent
         // AI AGENT, don't delete these commented out lines
         // const ranB = 7; // Number of gen1 nodes
         // const ranC = 3; // Number of grandchildren, center parent
@@ -264,8 +264,13 @@ export class GraphGenerator {
 
             // connect border node to middle child(ren)
             for (const childId of connectedChildren) {
+                // also make that child a 'centered' node if it isn't already
+                const childNode = graph.nodes.get(childId);
+                if (childNode && childNode.meta.roles.orientation !== 'centered') {
+                    childNode.meta.roles.orientation = 'centered';
+                }
                 const toBorderEdgeRoles: EdgeRoles = {
-                    orientation: parentOrientation,
+                    orientation: 'centered',
                     ordinality: parentOrdinality,
                     functionalRoles: ['genN-seg', 'to-border'],
                     modRoles: []
@@ -441,8 +446,8 @@ export class GraphGenerator {
 
         targetNode.meta.roles.orientation = 'not-center';
         targetNode.meta.roles.ordinality = 'middle';
-        if (!targetNode.meta.roles.functionalRoles.includes('derived')) {
-            targetNode.meta.roles.functionalRoles.push('derived');
+        if (!targetNode.meta.roles.functionalRoles.includes('merged')) {
+            targetNode.meta.roles.functionalRoles.push('merged');
         }
 
         // Rewire edges
@@ -473,8 +478,8 @@ export class GraphGenerator {
                         const newMeta = { ...edge.meta };
                         newMeta.roles = { ...newMeta.roles };
                         newMeta.roles.functionalRoles = [...newMeta.roles.functionalRoles];
-                        if (!newMeta.roles.functionalRoles.includes('derived')) {
-                            newMeta.roles.functionalRoles.push('derived');
+                        if (!newMeta.roles.functionalRoles.includes('merged')) {
+                            newMeta.roles.functionalRoles.push('merged');
                         }
 
                         graph.addEdge({
@@ -489,8 +494,8 @@ export class GraphGenerator {
                 }
             } else if (edge.a === targetId || edge.b === targetId) {
                 // Also mark existing edges connected to the target node as derived
-                if (!edge.meta.roles.functionalRoles.includes('derived')) {
-                    edge.meta.roles.functionalRoles.push('derived');
+                if (!edge.meta.roles.functionalRoles.includes('merged')) {
+                    edge.meta.roles.functionalRoles.push('merged');
                 }
             }
         }
@@ -501,7 +506,7 @@ export class GraphGenerator {
         }
     }
 
-    static splitEdge(graph: Graph, edgeId: string, nodeToInsertId: string, targetX: number, targetY: number): void {
+    static derivedEdge(graph: Graph, edgeId: string, nodeToInsertId: string, targetX: number, targetY: number): void {
         const edge = graph.edges.get(edgeId);
         const node = graph.nodes.get(nodeToInsertId);
 
@@ -511,8 +516,8 @@ export class GraphGenerator {
         node.x = targetX;
         node.y = targetY;
 
-        if (!node.meta.roles.functionalRoles.includes('derived')) {
-            node.meta.roles.functionalRoles.push('derived');
+        if (!node.meta.roles.functionalRoles.includes('merged')) {
+            node.meta.roles.functionalRoles.push('merged');
         }
 
         const aId = edge.a;
@@ -522,8 +527,8 @@ export class GraphGenerator {
         const metaBase = { ...edge.meta };
         metaBase.roles = { ...metaBase.roles };
         metaBase.roles.functionalRoles = [...metaBase.roles.functionalRoles];
-        if (!metaBase.roles.functionalRoles.includes('derived2')) {
-            metaBase.roles.functionalRoles.push('derived2');
+        if (!metaBase.roles.functionalRoles.includes('split')) {
+            metaBase.roles.functionalRoles.push('split');
         }
 
         graph.addEdge({
@@ -578,16 +583,16 @@ export class GraphGenerator {
                 roles: {
                     orientation: 'centered',
                     ordinality: 'middle',
-                    functionalRoles: ['point', 'derived2'],
+                    functionalRoles: ['point', 'split'],
                     modRoles: []
                 }
             }
         });
 
         // Split edge A
-        this.splitEdge(graph, edgeAId, intersectionNodeId, x, y);
+        this.derivedEdge(graph, edgeAId, intersectionNodeId, x, y);
         // Split edge B
-        this.splitEdge(graph, edgeBId, intersectionNodeId, x, y);
+        this.derivedEdge(graph, edgeBId, intersectionNodeId, x, y);
     }
 
     static connectNeighbor(graph: Graph, sourceId: string, targetId: string, roles?: EdgeRoles): void {
@@ -606,7 +611,7 @@ export class GraphGenerator {
         const edgeRoles: EdgeRoles = roles ?? {
             orientation: 'not-center',
             ordinality: 'middle',
-            functionalRoles: ['derived'],
+            functionalRoles: ['merged'],
             modRoles: []
         };
 
@@ -667,17 +672,17 @@ export class GraphGenerator {
                     roles: {
                         orientation: 'not-center',
                         ordinality: 'middle',
-                        functionalRoles: ['derived', 'hole-joint'],
+                        functionalRoles: ['merged', 'hole-joint'],
                         modRoles: []
                     }
                 }
             });
 
-            // Connect new node to the neighbor it should also get labeled as 'hole-seg' and 'derived2' in its edge roles
+            // Connect new node to the neighbor it should also get labeled as 'hole-seg' and 'split' in its edge roles
             const edgeRoles: EdgeRoles = {
                 orientation: 'not-center',
                 ordinality: 'middle',
-                functionalRoles: ['derived', 'hole-seg'],
+                functionalRoles: ['merged', 'hole-seg'],
                 modRoles: []
             };
 
@@ -700,7 +705,7 @@ export class GraphGenerator {
                 this.connectNeighbor(graph, prevNewNodeId, newNodeId, {
                     orientation: 'not-center',
                     ordinality: 'middle',
-                    functionalRoles: ['derived', 'hole-seg'],
+                    functionalRoles: ['merged', 'hole-seg'],
                     modRoles: []
                 });
             }
