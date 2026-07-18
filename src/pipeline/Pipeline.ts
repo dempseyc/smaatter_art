@@ -3,6 +3,7 @@ import { Analyser } from './Analyser';
 import { GraphGenerator } from '../graph/GraphGenerator';
 import { GraphLayoutEngine } from '../layout/GraphLayoutEngine';
 import { GraphSnapshot, applySnapshotAsTargets, captureSnapshot } from '../graph/GraphSnapshot';
+import { Relaxer } from '../layout/Relaxer';
 
 export interface AnalysisResult {
     graph: Graph;
@@ -82,6 +83,11 @@ export class Pipeline {
         return true;
     }
 
+    /** Run relaxation to adjust node positions using spring forces. */
+    static runRelax(graph: Graph, iterations: number = 10): void {
+        Relaxer.relax(graph, iterations);
+    }
+
     /** Runs a full analysis pass on the graph, returning the final graph and snapshots of node positions before and after mutations. */
 
     static runFullAnalysis(graph: Graph, width: number): AnalysisResult {
@@ -94,7 +100,6 @@ export class Pipeline {
             // Always merge first to a clean state
             if (Pipeline.runMerges(currentGraph, width)) continue; // later make dynamic based on count of mergeRuns
             if (Pipeline.runLineLineIntersections(currentGraph)) continue; // if we made any intersections, we need to re-run merges and intersections
-            // if (Pipeline.runConnectNearby(currentGraph, width)) continue;  // not needed yet
 
             // Geometry is stable — wire border connections, then re-merge
             if (Pipeline.runBorderConnections(currentGraph, width)) continue; // if we made any border connections, we need to re-run merges and intersections
@@ -105,12 +110,11 @@ export class Pipeline {
 
         const snapshot1 = captureSnapshot(currentGraph);
 
-
         // Pipeline.runHoleCreation(currentGraph);
+        // Pipeline.runConnectNearby(currentGraph, width);
+
+        // Capture snapshot2 as starting positions for relaxation
         const snapshot2 = captureSnapshot(currentGraph);
-
-        applySnapshotAsTargets(currentGraph, snapshot2);
-
 
         return { graph: currentGraph, snapshots: [snapshot0, snapshot1, snapshot2] };
     }

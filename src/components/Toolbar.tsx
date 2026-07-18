@@ -8,11 +8,12 @@ interface ToolbarProps {
     onRerunLayout: () => void;
     onExportSvg: () => void;
     onAnalysisPass: () => void;
+    onRelaxPass: () => void;
 }
 
 const modes: LayoutMode[] = ['force', 'circle', 'grid', 'breadthfirst', 'concentric', 'random', 'kamada', 'smatter'];
 
-export function Toolbar({ layoutMode, onLayoutChange, onRandomize, onRerunLayout, onExportSvg, onAnalysisPass }: ToolbarProps) {
+export function Toolbar({ layoutMode, onLayoutChange, onRandomize, onRerunLayout, onExportSvg, onAnalysisPass, onRelaxPass }: ToolbarProps) {
     return (
         <div style={{ marginBottom: 16 }}>
             <h2 style={{ margin: '0 0 8px', fontSize: 18 }}>Layout</h2>
@@ -28,6 +29,7 @@ export function Toolbar({ layoutMode, onLayoutChange, onRandomize, onRerunLayout
                 <button onClick={onRandomize}>Randomize Graph</button>
                 <button onClick={onRerunLayout}>Re-run Layout</button>
                 <button onClick={onAnalysisPass} style={{ background: '#4422bb', color: 'white', fontWeight: 'bold' }}>Run Analysis Pass</button>
+                <button onClick={onRelaxPass} style={{ background: '#22bb44', color: 'white', fontWeight: 'bold' }}>Run Relax Pass</button>
                 <button onClick={onExportSvg}>Export SVG</button>
             </div>
         </div>

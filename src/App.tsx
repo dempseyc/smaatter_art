@@ -5,6 +5,7 @@ import { SvgRenderer } from './render/SvgRenderer';
 import { Toolbar } from './components/Toolbar';
 import { Inspector } from './components/Inspector';
 import { Pipeline } from './pipeline/Pipeline';
+import { captureSnapshot } from './graph/GraphSnapshot';
 import type { GraphSnapshot } from './graph/GraphSnapshot';
 
 export type LayoutMode = 'force' | 'circle' | 'grid' | 'breadthfirst' | 'concentric' | 'random' | 'kamada' | 'smatter';
@@ -63,6 +64,14 @@ function App() {
         runAnalysisPass();
     };
 
+    const runRelaxPass = () => {
+        const graphToRelax = positionedGraph.clone();
+        Pipeline.runRelax(graphToRelax, 10);
+        const snapshot3 = captureSnapshot(graphToRelax);
+        setSnapshotAfter(snapshot3);
+        setPositionedGraph(graphToRelax);
+    };
+
     const exportSvg = () => {
         const svgMarkup = `
             <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
@@ -100,7 +109,7 @@ function App() {
     return (
         <div style={{ display: 'flex', minHeight: '100vh', background: '#111', color: '#f4f4f4', fontFamily: 'Inter, sans-serif' }}>
             <aside style={{ width: 260, padding: 20, borderRight: '1px solid #2a2a2a', background: '#181818' }}>
-                <Toolbar layoutMode={layoutMode} onLayoutChange={setLayoutMode} onRandomize={randomize} onRerunLayout={rerunLayout} onExportSvg={exportSvg} onAnalysisPass={runAnalysisPass} />
+                <Toolbar layoutMode={layoutMode} onLayoutChange={setLayoutMode} onRandomize={randomize} onRerunLayout={rerunLayout} onExportSvg={exportSvg} onAnalysisPass={runAnalysisPass} onRelaxPass={runRelaxPass} />
                 <Inspector graph={positionedGraph} />
             </aside>
             <main style={{ flex: 1, padding: 24 }}>
