@@ -8,9 +8,11 @@ interface SvgRendererProps {
 
 const width = 734;
 const height = 734;
+const size = 5; // Size of the node shapes
 
 
 export function SvgRenderer({ graph }: SvgRendererProps) {
+
     const nodeCSSclasses = (node: any) => {
         const classes = ['node'];
         const roles = node.meta?.roles;
@@ -25,6 +27,7 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
         }
         return classes.join(' ');
     }
+
     const edgeCSSclasses = (edge: any) => {
         const classes = ['edge'];
         const roles = edge.meta?.roles;
@@ -43,6 +46,27 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
 
         return classes.join(' ');
     }
+
+    const Dot = ({ id, x, y, angle, size, className }: { id: string; x: number; y: number; angle: number; size: number; className: string }) => (
+        <g transform={`translate(${x}, ${y}) rotate(${((angle * 180) / Math.PI) - 90})`}>
+            {(() => {
+                const s = size;
+                return <circle r={s} className={className} />;
+            })()}
+            <text x={0} y={4} className={`${id} label`} textAnchor="middle" fill="white"></text>
+        </g>
+    );
+
+    const Triangle = ({ id, x, y, angle, size, className }: { id: string; x: number; y: number; angle: number; size: number; className: string }) => (
+        <g transform={`translate(${x}, ${y}) rotate(${((angle * 180) / Math.PI) - 90})`}>
+            {(() => {
+                const s = size;
+                return <polygon points={`${-s},${-s} ${s * 1.6},0 ${-s},${s}`} className={className} />;
+            })()}
+            <text x={0} y={4} className={`${id} label`} textAnchor="middle" fill="white"></text>
+        </g>
+    );
+
     return (
         <div style={{ width: '734px', height: '734px', background: '#0b0b0b', borderRadius: 12, border: '1px solid #2a2a2a', overflow: 'hidden' }}>
             <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
@@ -56,16 +80,9 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
 
                     return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={edgeCSSclasses(edge)} />;
                 })}
-                {Array.from(graph.nodes.values()).map((node) => (
-                    <g key={node.id} transform={`translate(${node.x}, ${node.y}) rotate(${((node.angle * 180) / Math.PI) - 90})`}>
-                        {(() => {
-                            const gen = node.meta?.generation ?? 3;
-                            const s = Math.max(3, 20 - gen * 4);
-                            return <polygon points={`${-s},${-s} ${s * 1.6},0 ${-s},${s}`} className={nodeCSSclasses(node)} />;
-                        })()}
-                        <text x={0} y={4} className={`${node.id} label`} textAnchor="middle" fill="white"></text>
-                    </g>
-                ))}
+                {Array.from(graph.nodes.values()).map((node) => {
+                    return <Triangle key={node.id} id={node.id} x={node.x} y={node.y} angle={node.angle} size={size} className={nodeCSSclasses(node)} />;
+                })}
             </svg>
         </div>
     );

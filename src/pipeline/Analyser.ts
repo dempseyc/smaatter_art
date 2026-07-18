@@ -1,4 +1,5 @@
 import { Graph, NodeId } from '../graph/Graph';
+import type { EdgeRoles } from '../graph/GraphGenerator';
 
 export type MergeOperation = {
     type: 'merge';
@@ -29,60 +30,72 @@ export type ConnectNeighborOperation = {
     type: 'connect-neighbor';
     sourceId: NodeId;
     targetId: NodeId;
+    roles: EdgeRoles;
 };
 
 export type GraphOperation = MergeOperation | ExpandOperation | EdgeSplitOperation | IntersectionOperation | ConnectNeighborOperation;
 
 export class Analyser {
+
     /**
-     * Finds nodes that are close to each other but not directly connected
+     * Finds nodes that are close to each other whether or not they are connected.
      * and recommends merging them into a single cluster node.
      * Distance threshold is based on layout geometry width/32
      */
-    static findMergeableNodes(graph: Graph, threshold: number = 15): MergeOperation[] {
+    static findMergeableNodes(graph: Graph, width: number): MergeOperation[] {
         const ops: MergeOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
-        const visited = new Set<NodeId>();
+        const threshold = width / 24; // Tighter threshold for merging
 
         const isMutable = (roles: string[]) => !roles.some(r =>
-            r === 'border' || r === 'border-joint' || r === 'terminal'
+            r === 'border' || r === 'border-joint' || r === 'terminal' || r === 'to-border' || r === 'centered' || r === 'gen0'
         );
 
+        // Build proximity map: nodeId → list of nearby mutable nodes
+        const proximityMap = new Map<NodeId, Set<NodeId>>();
+        for (const node of nodes) {
+            if (!isMutable(node.meta.roles.functionalRoles)) continue;
+            proximityMap.set(node.id, new Set());
+        }
+
+        // Find all close pairs
         for (let i = 0; i < nodes.length; i++) {
             const nodeA = nodes[i];
-            if (visited.has(nodeA.id)) continue;
-            // Border/terminal nodes are position references only — never mutate them
-            if (!isMutable(nodeA.meta.roles.functionalRoles)) continue;
-
-            const cluster = [nodeA.id];
-            visited.add(nodeA.id);
+            if (!proximityMap.has(nodeA.id)) continue;
 
             for (let j = i + 1; j < nodes.length; j++) {
                 const nodeB = nodes[j];
-                if (visited.has(nodeB.id)) continue;
-                if (!isMutable(nodeB.meta.roles.functionalRoles)) continue;
+                if (!proximityMap.has(nodeB.id)) continue;
 
                 const dx = nodeA.x - nodeB.x;
                 const dy = nodeA.y - nodeB.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
                 if (dist < threshold) {
-                    // Coincident nodes (dist ≈ 0) must always merge — they form a degenerate
-                    // zero-length edge when splitEdge connects them, so hasEdge would be true
-                    // even though they are the same physical point.
-                    const coincident = dist < 1;
-                    if (!coincident) {
-                        // For non-coincident close nodes, skip directly connected neighbors
-                        const hasEdge = Array.from(graph.edges.values()).some(e =>
-                            (e.a === nodeA.id && e.b === nodeB.id) ||
-                            (e.a === nodeB.id && e.b === nodeA.id) &&
-                            e.meta.roles.functionalRoles.includes('border-chain') === false
-                        );
-                        if (hasEdge) continue;
-                    }
+                    proximityMap.get(nodeA.id)!.add(nodeB.id);
+                    proximityMap.get(nodeB.id)!.add(nodeA.id);
+                }
+            }
+        }
 
-                    cluster.push(nodeB.id);
-                    visited.add(nodeB.id);
+        // Cluster transitively using union-find
+        const visited = new Set<NodeId>();
+        for (const startId of proximityMap.keys()) {
+            if (visited.has(startId)) continue;
+
+            // BFS to find all transitively connected close nodes
+            const cluster: NodeId[] = [];
+            const queue = [startId];
+            while (queue.length > 0) {
+                const id = queue.shift()!;
+                if (visited.has(id)) continue;
+                visited.add(id);
+                cluster.push(id);
+
+                for (const nearbyId of proximityMap.get(id)!) {
+                    if (!visited.has(nearbyId)) {
+                        queue.push(nearbyId);
+                    }
                 }
             }
 
@@ -121,83 +134,39 @@ export class Analyser {
     }
 
     /**
-     * Finds nodes that are very close to an edge but aren't connected to it.
-     * Recommends splitting the edge and making the node part of it.
+     * Finds nodes that are close to each other but not directly connected and recommends connecting them with a new edge.
+     * Distance threshold is based on layout geometry width/32
      */
-    static findEdgeProximities(graph: Graph, layoutWidth: number): EdgeSplitOperation[] {
-        const threshold = layoutWidth / 32; // Tighter threshold for edge proximity
-        const ops: EdgeSplitOperation[] = [];
+    static findConnectableNeighbors(graph: Graph, width: number): ConnectNeighborOperation[] {
+        const ops: ConnectNeighborOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
-        const edges = Array.from(graph.edges.values());
+        const threshold = width / 32;
 
-        // Function to find the shortest distance from a point to a line segment
-        const pointToSegmentDistance = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
-            const A = px - x1;
-            const B = py - y1;
-            const C = x2 - x1;
-            const D = y2 - y1;
+        for (let i = 0; i < nodes.length; i++) {
+            const nodeA = nodes[i];
 
-            const dot = A * C + B * D;
-            const lenSq = C * C + D * D;
-            let param = -1;
+            for (let j = i + 1; j < nodes.length; j++) {
+                const nodeB = nodes[j];
 
-            if (lenSq !== 0) {
-                param = dot / lenSq;
-            }
+                const dx = nodeA.x - nodeB.x;
+                const dy = nodeA.y - nodeB.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
 
-            let xx, yy;
+                if (dist < threshold) {
+                    // Skip directly connected neighbors
+                    const hasEdge = Array.from(graph.edges.values()).some(e =>
+                        (e.a === nodeA.id && e.b === nodeB.id) ||
+                        (e.a === nodeB.id && e.b === nodeA.id)
+                    );
+                    if (hasEdge) continue;
 
-            if (param < 0) {
-                xx = x1;
-                yy = y1;
-            } else if (param > 1) {
-                xx = x2;
-                yy = y2;
-            } else {
-                xx = x1 + param * C;
-                yy = y1 + param * D;
-            }
-
-            const dx = px - xx;
-            const dy = py - yy;
-            return {
-                distance: Math.sqrt(dx * dx + dy * dy),
-                targetX: xx,
-                targetY: yy
-            };
-        };
-
-        for (const edge of edges) {
-            const nodeA = graph.nodes.get(edge.a);
-            const nodeB = graph.nodes.get(edge.b);
-
-            if (!nodeA || !nodeB) continue;
-
-            for (const node of nodes) {
-                // Don't check the edge's own endpoints
-                if (node.id === nodeA.id || node.id === nodeB.id) continue;
-                // Border/terminal nodes are position references only — don't use them to split edges
-                if (node.meta.roles.functionalRoles.some(r =>
-                    r === 'border' || r === 'border-joint' || r === 'terminal'
-                )) continue;
-
-                const result = pointToSegmentDistance(
-                    node.x, node.y,
-                    nodeA.x, nodeA.y,
-                    nodeB.x, nodeB.y
-                );
-
-                if (result.distance < threshold) {
+                    // Recommend connecting these two nodes
                     ops.push({
-                        type: 'split-edge',
-                        edgeId: edge.id,
-                        targetX: result.targetX,
-                        targetY: result.targetY
+                        type: 'connect-neighbor',
+                        sourceId: nodeA.id,
+                        targetId: nodeB.id,
+                        roles: { functionalRoles: ['to-border'], orientation: 'not-center', ordinality: 'middle', modRoles: [] }
                     });
-
-                    // Only find the absolute nearest node to split the edge by
-                    // Break so we only perform one single split at a time on an edge to avoid coordinate shifting issues
-                    break;
                 }
             }
         }
@@ -210,8 +179,9 @@ export class Analyser {
      * Recommends creating an intersection node.
      */
     static findEdgeIntersections(graph: Graph): IntersectionOperation[] {
+
         const ops: IntersectionOperation[] = [];
-        const edges = Array.from(graph.edges.values());
+        const edges = Array.from(graph.edges.values()).filter(edge => !edge.meta.roles.functionalRoles.includes('border-chain'));
 
         // Function to find intersection between two line segments
         const checkIntersection = (
@@ -303,6 +273,7 @@ export class Analyser {
      * to connect to if an edge doesn't already exist. Supports equidistant targets.
      */
     static findBorderConnections(graph: Graph, layoutWidth: number): ConnectNeighborOperation[] {
+
         const ops: ConnectNeighborOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
 
@@ -311,7 +282,7 @@ export class Analyser {
         if (borderJoints.length === 0) return ops;
 
         // Max connection distance
-        const maxDist = layoutWidth / 4;
+        const maxDist = layoutWidth / 2;
 
         for (const joint of borderJoints) {
             let nearestNodes: NodeId[] = [];
@@ -353,7 +324,8 @@ export class Analyser {
                     ops.push({
                         type: 'connect-neighbor',
                         sourceId: joint.id,
-                        targetId: targetNodeId
+                        targetId: targetNodeId,
+                        roles: { functionalRoles: ['to-border'], orientation: 'not-center', ordinality: 'middle', modRoles: [] }
                     });
                 }
             }
@@ -366,6 +338,7 @@ export class Analyser {
 
         const ops: ExpandOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
+        const expandableNodes: NodeId[] = [];
         if (nodes.length === 0) return ops;
 
         for (const node of nodes) {
@@ -373,26 +346,66 @@ export class Analyser {
             const isBorderNode = node.meta.roles.functionalRoles.some(r => r.includes('border'));
             const isTerminal = node.meta.roles.functionalRoles.includes('terminal');
             const isBorderJoint = node.meta.roles.functionalRoles.includes('border-joint');
-            const isCentered = node.meta.roles.orientation.includes('centered');
-            if (isBorderNode || isTerminal || isBorderJoint || isCentered) continue;
+            // const isCentered = node.meta.roles.orientation.includes('centered');
+            if (isBorderNode || isTerminal || isBorderJoint) continue;
 
             // border-chain edges must not be counted never
-            // If the node has more than 5 edges, we consider it expandable
+            // If the node has more than 6 edges, we consider it expandable
             const nonBorderEdges = Array.from(graph.edges.values()).filter(e => {
-                const isToBorder = e.meta.roles.functionalRoles.includes('to-border');
                 const isBorderEdge = e.meta.roles.functionalRoles.includes('border-chain');
                 const isCentered = e.meta.roles.orientation.includes('centered');
-                return !isCentered && !isBorderEdge && !isToBorder && (e.a === node.id || e.b === node.id);
+                return !isCentered && !isBorderEdge && (e.a === node.id || e.b === node.id);
             });
-            if (nonBorderEdges.length > 5) {
-                ops.push({ type: 'expand', nodeId: node.id });
-            }
-            const edgeCount = Array.from(graph.edges.values()).filter(e => e.a === node.id || e.b === node.id).length;
-            if (edgeCount > 5) {
-                ops.push({ type: 'expand', nodeId: node.id });
+
+            const edgeCount = Array.from(nonBorderEdges).filter(e => e.a === node.id || e.b === node.id).length;
+            if (edgeCount > 6) {
+                expandableNodes.push(node.id);
             }
         }
 
-        return ops;
+        // Plan symmetric expansions, avoiding overlap with already-expanded neighbors
+        const planExpansions = () => {
+            const expansions: ExpandOperation[] = [];
+            const processed = new Set<NodeId>();
+
+            for (const nodeId of expandableNodes) {
+                if (processed.has(nodeId)) continue;
+
+                const node = nodes.find(n => n.id === nodeId);
+                if (!node) continue;
+
+                // Check if any neighbor of this node has already been marked for expansion
+                // If so, skip to prevent overlap
+                const hasExpandedNeighbor = Array.from(graph.edges.values()).some(edge => {
+                    const neighborId = edge.a === nodeId ? edge.b : (edge.b === nodeId ? edge.a : null);
+                    return neighborId && processed.has(neighborId);
+                });
+
+                if (hasExpandedNeighbor) continue;
+
+                if (node.twinId) {
+                    const isTwinExpandable = expandableNodes.includes(node.twinId);
+                    if (isTwinExpandable && !processed.has(node.twinId)) {
+                        // Expand twin pair together for symmetry
+                        expansions.push({ type: 'expand', nodeId });
+                        expansions.push({ type: 'expand', nodeId: node.twinId });
+                        processed.add(nodeId);
+                        processed.add(node.twinId);
+                    } else {
+                        // Twin not expandable, just expand this node
+                        expansions.push({ type: 'expand', nodeId });
+                        processed.add(nodeId);
+                    }
+                } else {
+                    // No twin (on center line), expand alone
+                    expansions.push({ type: 'expand', nodeId });
+                    processed.add(nodeId);
+                }
+            }
+
+            return expansions;
+        };
+
+        return planExpansions();
     }
 }

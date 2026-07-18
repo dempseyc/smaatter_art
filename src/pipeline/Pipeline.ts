@@ -18,11 +18,11 @@ export class Pipeline {
     }
 
     /** Repeatedly merges close/coincident nodes until the graph is fully stable. */
-    private static runMerges(graph: Graph, threshold: number): boolean {
+    private static runMerges(graph: Graph, width: number): boolean {
         let anyMerged = false;
         let found = true;
         while (found) {
-            const ops = Analyser.findMergeableNodes(graph, threshold);
+            const ops = Analyser.findMergeableNodes(graph, width);
             if (ops.length === 0) { found = false; break; }
             const modified = new Set<string>();
             for (const op of ops) {
@@ -35,44 +35,28 @@ export class Pipeline {
         return anyMerged;
     }
 
-    /** One pass of edge proximity snapping and edge intersection splitting. */
-    private static runIntersections(graph: Graph, width: number): boolean {
-        const ops = [
-            ...Analyser.findEdgeProximities(graph, width),
-            ...Analyser.findEdgeIntersections(graph),
-        ];
+
+    /** One pass of connecting nearby nodes that are not already connected. */
+    private static runConnectNearby(graph: Graph, width: number): boolean {
+        const ops = Analyser.findConnectableNeighbors(graph, width);
+        if (ops.length === 0) return false;
+        for (const op of ops) {
+            GraphGenerator.connectNeighbor(graph, op.sourceId, op.targetId);
+        }
+        return true;
+    }
+
+    /** One pass of line-to-line intersections: finds crossing edges and creates intersection nodes. */
+    private static runLineLineIntersections(graph: Graph): boolean {
+        const ops = Analyser.findEdgeIntersections(graph);
         if (ops.length === 0) return false;
 
         const modified = new Set<string>();
         for (const op of ops) {
-            if (op.type === 'split-edge') {
-                if (modified.has(op.edgeId)) continue;
-                const edge = graph.edges.get(op.edgeId);
-                if (!edge) continue;
-                const splitNodeId = `split-${op.edgeId}-${Math.random().toString(36).substring(2, 7)}`;
-                graph.addNode({
-                    id: splitNodeId,
-                    x: op.targetX,
-                    y: op.targetY,
-                    angle: 0,
-                    meta: {
-                        generation: edge.meta.generation + 1,
-                        roles: {
-                            orientation: 'centered',
-                            ordinality: 'middle',
-                            functionalRoles: ['point', 'split'],
-                            modRoles: [],
-                        },
-                    },
-                });
-                GraphGenerator.derivedEdge(graph, op.edgeId, splitNodeId, op.targetX, op.targetY);
-                modified.add(op.edgeId);
-            } else if (op.type === 'intersect') {
-                if (modified.has(op.edgeA) || modified.has(op.edgeB)) continue;
-                GraphGenerator.intersectEdges(graph, op.edgeA, op.edgeB, op.targetX, op.targetY);
-                modified.add(op.edgeA);
-                modified.add(op.edgeB);
-            }
+            if (modified.has(op.edgeA) || modified.has(op.edgeB)) continue;
+            GraphGenerator.intersectEdges(graph, op.edgeA, op.edgeB, op.targetX, op.targetY);
+            modified.add(op.edgeA);
+            modified.add(op.edgeB);
         }
         return true;
     }
@@ -104,17 +88,16 @@ export class Pipeline {
         const currentGraph = graph.clone();
         const snapshot0 = captureSnapshot(currentGraph);
         const maxIterations = 50;
+        Analyser.findTwins(currentGraph, width); // mark twins before running further operations, so that all future transformations remain symmetrical
 
         for (let i = 0; i < maxIterations; i++) {
             // Always merge first to a clean state
-            Pipeline.runMerges(currentGraph, 15); // later make dynamic based on count of mergeRuns
-            Analyser.findTwins(currentGraph, width); // mark twins before running intersections, so that all future transformations remain symmetrical
-
-            // If there is still geometry to resolve, loop back to merge again
-            if (Pipeline.runIntersections(currentGraph, width)) continue;
+            if (Pipeline.runMerges(currentGraph, width)) continue; // later make dynamic based on count of mergeRuns
+            if (Pipeline.runLineLineIntersections(currentGraph)) continue; // if we made any intersections, we need to re-run merges and intersections
+            // if (Pipeline.runConnectNearby(currentGraph, width)) continue;  // not needed yet
 
             // Geometry is stable — wire border connections, then re-merge
-            if (Pipeline.runBorderConnections(currentGraph, width)) continue;
+            if (Pipeline.runBorderConnections(currentGraph, width)) continue; // if we made any border connections, we need to re-run merges and intersections
 
             // Nothing left to do
             break;
@@ -122,8 +105,8 @@ export class Pipeline {
 
         const snapshot1 = captureSnapshot(currentGraph);
 
-        Pipeline.runHoleCreation(currentGraph);
 
+        // Pipeline.runHoleCreation(currentGraph);
         const snapshot2 = captureSnapshot(currentGraph);
 
         applySnapshotAsTargets(currentGraph, snapshot2);
