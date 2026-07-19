@@ -1,10 +1,10 @@
 import { Graph, NodeId } from '../graph/Graph';
 
 export interface SpringSettings {
-    stiffness: number; // 0-1, how strongly edges pull
-    minLength: number; // minimum edge length
-    maxLength: number; // maximum edge length
-    targetLength: number; // desired edge length (or average if 0)
+    stiffness?: number; // 0-1, how strongly edges pull
+    minLength?: number; // minimum edge length
+    maxLength?: number; // maximum edge length
+    targetLength?: number; // desired edge length (or average if 0)
     grow?: number; // optional multiplier for average length, default 1
 }
 
@@ -43,8 +43,10 @@ export class Relaxer {
      * Border nodes and terminal nodes are fixed anchors.
      * N0 (root) can move.
      */
-    static relax(graph: Graph, iterations: number = 50, springs: SpringSettings = this.DEFAULT_SPRINGS, useBorder: boolean = true): void {
-        const avgLength = springs.targetLength > 0 ? springs.targetLength : this.calculateAverageEdgeLength(graph) * (springs.grow ?? 1);
+    static relax(graph: Graph, iterations: number = 50, springs: SpringSettings = {}, useBorder: boolean = true): void {
+        // Merge provided springs with defaults (defaults used unless overridden)
+        const settings = { ...this.DEFAULT_SPRINGS, ...springs };
+        const avgLength = settings.targetLength! > 0 ? settings.targetLength! : this.calculateAverageEdgeLength(graph) * (settings.grow ?? 1);
         const DAMPING = 0.05; // Damping factor to reduce jitter
         // Identify anchor nodes (terminal nodes cannot move, and optionally border nodes)
         const anchorIds = new Set<NodeId>();
@@ -90,7 +92,7 @@ export class Relaxer {
 
                 // Calculate spring force
                 const lengthDiff = dist - desiredLength;
-                const forceMagnitude = lengthDiff * springs.stiffness;
+                const forceMagnitude = lengthDiff * settings.stiffness!;
 
                 // Normalize direction
                 const dirX = dx / dist;

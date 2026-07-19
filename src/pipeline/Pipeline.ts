@@ -1,11 +1,11 @@
 import { Graph } from '../graph/Graph';
 import { Node } from '../graph/Node';
 import { Analyser, type IntersectionOperation } from './Analyser';
-import { GraphGenerator } from '../graph/GraphGenerator';
+import { GraphGenerator, type EdgeRoles } from '../graph/GraphGenerator';
 import { GraphLayoutEngine } from '../layout/GraphLayoutEngine';
 import { captureSnapshot } from '../graph/GraphSnapshot';
 import type { GraphSnapshot } from '../graph/GraphSnapshot';
-import { Relaxer } from '../layout/Relaxer';
+import { Relaxer, SpringSettings } from '../layout/Relaxer';
 
 export interface AnalysisResult {
     graph: Graph;
@@ -336,18 +336,15 @@ export class Pipeline {
         }
 
         for (const op of ops) {
-            GraphGenerator.connectNeighbor(graph, op.sourceId, op.targetId);
-        }
-        return true;
-    }
-
-    /** If a node has > 5 edges, make it a hole, by makeng a new node interpolated between itself and each neighbor,
-     * then connecting those new nodes to each other in a ring, then removing the original node. This is a one-pass operation, and may need to be repeated if new nodes are created that also have > 5 edges. */
-    static runHoleCreation(graph: Graph): boolean {
-        const ops = Analyser.findExpandableNodes(graph);
-        if (ops.length === 0) return false;
-        for (const op of ops) {
-            GraphGenerator.createHole(graph, op.nodeId);
+            const sourceNode = graph.nodes.get(op.sourceId);
+            const generation = sourceNode?.meta.generation ?? 0;
+            const roles: EdgeRoles = {
+                orientation: 'not-center',
+                ordinality: 'middle',
+                functionalRoles: [`genN-seg`, 'to-border'],
+                modRoles: []
+            };
+            GraphGenerator.connectNeighbor(graph, op.sourceId, op.targetId, roles);
         }
         return true;
     }
@@ -368,8 +365,8 @@ export class Pipeline {
     }
 
     /** Run relaxation to adjust node positions using spring forces. */
-    static runRelax(graph: Graph, iterations: number = 10): void {
-        Relaxer.relax(graph, iterations);
+    static runRelax(graph: Graph, iterations: number = 10, springs: SpringSettings = { targetLength: 0, grow: 0.9 }): void {
+        Relaxer.relax(graph, iterations, springs);
     }
 
     /** Runs a full analysis pass on the graph, returning the final graph and snapshots of node positions before and after mutations. */
@@ -377,6 +374,7 @@ export class Pipeline {
     static runFullAnalysis(graph: Graph, width: number): AnalysisResult {
         const currentGraph = graph.clone();
         const snapshot0 = captureSnapshot(currentGraph);
+        const snapshots: GraphSnapshot[] = [snapshot0];
         const maxIterations = 100;
         Analyser.findTwins(currentGraph, width); // mark twins before running further operations, so that all future transformations remain symmetrical
 
@@ -386,84 +384,82 @@ export class Pipeline {
             if (Pipeline.runNodeLineIntersections(currentGraph, width)) continue; // snap nodes to edges
             if (Pipeline.runMerges(currentGraph, width)) continue; // later make dynamic based on count of mergeRuns
 
-            // Geometry is stable — wire border connections, then re-merge
-            // if (Pipeline.runBorderConnections(currentGraph, width)) {
-            //     // Border connections might create new edge crossings, check for them
-            //     if (Pipeline.runLineLineIntersections(currentGraph, width)) {
-            //         Pipeline.runMerges(currentGraph, width);
-            //         continue;
-            //     }
-            //     Pipeline.runRelax(currentGraph, 5);
-            //     continue;
-            // }
-
+            // Geometry is stable — wire border connections
+            if (Pipeline.runBorderConnections(currentGraph, width)) {
+                Pipeline.runRelax(currentGraph, 3);
+                continue;
+            }
             // Nothing left to do
             break;
         }
 
-        for (let i = 0; i < maxIterations; i++) {
-            if (Pipeline.runLineLineIntersections(currentGraph, width)) continue; // if we made any intersections, we need to re-run merges and intersections
-            if (Pipeline.runNodeLineIntersections(currentGraph, width)) continue; // snap nodes to edges
-        }
+        snapshots.push(captureSnapshot(currentGraph));
 
-        const snapshot1 = captureSnapshot(currentGraph);
+        // now look at average edge length. compare it to each non-border edge, and if any edge is longer than 1.3x the average, 
+        // assign it a likelyhood of being a split candidate. If it is > 1.35 the average, weight 1 (100% chance), if its 1.1 the average wight 0.1 (10% chance).
+        // scale the weight by the ratio of the edge length to the average edge length. Then, for each edge that is a candidate, split it at its midpoint and create a new node there.
+        // if its x is width/2 (vertical center), then its chance is 0.
 
+        const edgesToSplit: { edgeId: string; targetX: number; targetY: number }[] = [];
+        const ratio: number = 1; // edges longer than this ratio of the average will be split
+        // only use right half of graph and apply to twins.
+        const rightHalfEdges = Array.from(currentGraph.edges.values()).filter(e => {
+            const nodeA = currentGraph.nodes.get(e.a);
+            const nodeB = currentGraph.nodes.get(e.b);
+            if (!nodeA || !nodeB) return false;
+            return nodeA.x > width / 2 && nodeB.x > width / 2;
+        });
+        // edges derive twins from their nodes, so look for edge on the left half whose nodes are 
+        const twinEdges = rightHalfEdges.map(e => {
+            const nodeA = currentGraph.nodes.get(e.a);
+            const nodeB = currentGraph.nodes.get(e.b);
+            if (!nodeA || !nodeB) return null;
+            // could be reversed, so check both directions
+            const directTwin = nodeA.twinId && nodeB.twinId ? currentGraph.edges.get(`${nodeA.twinId}-${nodeB.twinId}`) : null;
+            const reversedTwin = nodeA.twinId && nodeB.twinId ? currentGraph.edges.get(`${nodeB.twinId}-${nodeA.twinId}`) : null;
+            return directTwin || reversedTwin;
+        }).filter(e => e !== null);
 
-        // Pipeline.runHoleCreation(currentGraph);
-
-        // Capture snapshot2 as starting positions for relaxation
-        const snapshot2 = captureSnapshot(currentGraph);
-
-        /**
-         *  iteratively relax the graph, and check for any new point line intersections.  
-         * if found, run merges and intersections again, then relax again, until no new intersections are found or max iterations reached
-        */
-        const useToBorder = true; // whether to consider border nodes as anchors during relaxation
-
-        for (let i = 0; i < maxIterations; i++) {
-            Pipeline.runRelax(currentGraph, 0);
-            if (Pipeline.runLineLineIntersections(currentGraph, width, useToBorder) || Pipeline.runNodeLineIntersections(currentGraph, width)) {
-                // if we made any intersections, we need to re-run merges and intersections
-                Pipeline.runMerges(currentGraph, width);
-                continue;
+        // check if twin edges exist for each right half edge
+        for (let i = 0; i < rightHalfEdges.length; i++) {
+            const e = rightHalfEdges[i];
+            const twinEdge = twinEdges[i];
+            if (!twinEdge) continue; // no twin edge, skip
+            const nodeA = currentGraph.nodes.get(e.a);
+            const nodeB = currentGraph.nodes.get(e.b);
+            if (!nodeA || !nodeB) continue;
+            const dx = nodeA.x - nodeB.x;
+            const dy = nodeA.y - nodeB.y;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const splitChance = parseFloat((length / Relaxer.calculateAverageEdgeLength(currentGraph) * Math.random()).toFixed(2));
+            console.log(`Edge ${e.id} length: ${length.toFixed(2)}, splitChance: ${splitChance.toFixed(2)}, ratio: ${ratio}`);
+            if (splitChance > ratio) {
+                const twinEdge = currentGraph.edges.get(`${nodeA.twinId}-${nodeB.twinId}`);
+                if (twinEdge) {
+                    edgesToSplit.push({
+                        edgeId: twinEdge.id,
+                        targetX: (currentGraph.nodes.get(twinEdge.a)!.x + currentGraph.nodes.get(twinEdge.b)!.x) / 2,
+                        targetY: (currentGraph.nodes.get(twinEdge.a)!.y + currentGraph.nodes.get(twinEdge.b)!.y) / 2
+                    });
+                    console.log(`Edge ${e.id} has twin edge ${twinEdge.id}, will split both.`);
+                } else {
+                    console.log(`Edge ${e.id} has no twin edge, will split only this edge.`);
+                }
+                edgesToSplit.push({
+                    edgeId: e.id,
+                    targetX: (nodeA.x + nodeB.x) / 2,
+                    targetY: (nodeA.y + nodeB.y) / 2
+                });
             }
-            break; // no new intersections found, exit loop
+        }
+        snapshots.push(captureSnapshot(currentGraph));
+
+        for (const split of edgesToSplit) {
+            GraphGenerator.splitEdge(currentGraph, split.edgeId, split.targetX, split.targetY);
         }
 
+        snapshots.push(captureSnapshot(currentGraph));
 
-        const snapshot3 = captureSnapshot(currentGraph);
-
-
-        // now look at average edge length. compare it to each non-border edge, and if any edge is longer than 1.3x the average, split it in half by creating a new node at the midpoint
-        // const avgEdgeLength = Relaxer.calculateAverageEdgeLength(currentGraph);
-        // const edgesToSplit: { edgeId: string; targetX: number; targetY: number }[] = [];
-        // const ratio: number = 1.35; // edges longer than this ratio of the average will be split
-        // for (const edge of currentGraph.edges.values()) {
-        //     const nodeA = currentGraph.nodes.get(edge.a);
-        //     const nodeB = currentGraph.nodes.get(edge.b);
-        //     if (!nodeA || !nodeB) continue;
-        //     if (nodeA.meta.roles.functionalRoles.includes('border') || nodeA.meta.roles.functionalRoles.includes('border-joint') ||
-        //         nodeB.meta.roles.functionalRoles.includes('border') || nodeB.meta.roles.functionalRoles.includes('border-joint')) continue;
-
-        //     const dx = nodeA.x - nodeB.x;
-        //     const dy = nodeA.y - nodeB.y;
-        //     const length = Math.sqrt(dx * dx + dy * dy);
-        //     if (length > ratio * avgEdgeLength) {
-        //         edgesToSplit.push({
-        //             edgeId: edge.id,
-        //             targetX: (nodeA.x + nodeB.x) / 2,
-        //             targetY: (nodeA.y + nodeB.y) / 2
-        //         });
-        //     }
-        // }
-
-        // for (const split of edgesToSplit) {
-        //     GraphGenerator.splitEdge(currentGraph, split.edgeId, split.targetX, split.targetY);
-        // }
-
-
-        const snapshot4 = captureSnapshot(currentGraph);
-
-        return { graph: currentGraph, snapshots: [snapshot0, snapshot1, snapshot2, snapshot3, snapshot4] };
+        return { graph: currentGraph, snapshots: snapshots };
     }
 } 
