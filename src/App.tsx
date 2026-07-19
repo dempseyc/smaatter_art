@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Graph } from './graph/Graph';
 import { GraphLayoutEngine } from './layout/GraphLayoutEngine';
 import { SvgRenderer } from './render/SvgRenderer';
@@ -7,6 +7,7 @@ import { Inspector } from './components/Inspector';
 import { Pipeline } from './pipeline/Pipeline';
 import { captureSnapshot } from './graph/GraphSnapshot';
 import type { GraphSnapshot } from './graph/GraphSnapshot';
+import { Animator } from './animation/Animator';
 
 export type LayoutMode = 'force' | 'circle' | 'grid' | 'breadthfirst' | 'concentric' | 'random' | 'kamada' | 'smatter';
 
@@ -16,6 +17,27 @@ function App() {
     const [positionedGraph, setPositionedGraph] = useState<Graph>(() => new Graph());
     const [_snapshotBefore, setSnapshotBefore] = useState<GraphSnapshot | null>(null);
     const [_snapshotAfter, setSnapshotAfter] = useState<GraphSnapshot | null>(null);
+    const [displayGraph, setDisplayGraph] = useState<Graph>(() => new Graph());
+
+    // Animator instance
+    const animator = useRef(new Animator());
+
+    // Set up animator callback to update display
+    useMemo(() => {
+        animator.current.setFrameCallback((snapshot: GraphSnapshot) => {
+            // Create a clone of positionedGraph with snapshot positions applied
+            const displayClone = positionedGraph.clone();
+            snapshot.nodes.forEach((nodeSnapshot) => {
+                const node = displayClone.nodes.get(nodeSnapshot.id);
+                if (node) {
+                    node.x = nodeSnapshot.x;
+                    node.y = nodeSnapshot.y;
+                    node.angle = nodeSnapshot.angle;
+                }
+            });
+            setDisplayGraph(displayClone);
+        });
+    }, [positionedGraph]);
 
 
     const layout = useMemo(() => {
@@ -44,19 +66,64 @@ function App() {
         setSnapshotBefore(result.snapshots[0]);
         setSnapshotAfter(result.snapshots[2]);
         setGraph(result.graph);
-        setPositionedGraph(result.graph.clone());
+        const newPositionedGraph = result.graph.clone();
+        setPositionedGraph(newPositionedGraph);
+
+        // Apply first snapshot directly, then queue remaining for animation
+        const firstSnapshot = result.snapshots[0];
+        const displayClone = newPositionedGraph.clone();
+        firstSnapshot.nodes.forEach((nodeSnapshot) => {
+            const node = displayClone.nodes.get(nodeSnapshot.id);
+            if (node) {
+                node.x = nodeSnapshot.x;
+                node.y = nodeSnapshot.y;
+                node.angle = nodeSnapshot.angle;
+            }
+        });
+        setDisplayGraph(displayClone);
+        animator.current.queueSnapshots(result.snapshots.slice(1));
     };
 
     useMemo(() => {
         const fullGraph = Pipeline.generateInitialGraph(layout);
         setGraph(fullGraph);
-        setPositionedGraph(fullGraph.clone());
+        const newPositionedGraph = fullGraph.clone();
+        setPositionedGraph(newPositionedGraph);
+
+        // Apply first snapshot directly, then queue to animator
+        const snapshot0 = captureSnapshot(fullGraph);
+        const displayClone = newPositionedGraph.clone();
+        snapshot0.nodes.forEach((nodeSnapshot) => {
+            const node = displayClone.nodes.get(nodeSnapshot.id);
+            if (node) {
+                node.x = nodeSnapshot.x;
+                node.y = nodeSnapshot.y;
+                node.angle = nodeSnapshot.angle;
+            }
+        });
+        setDisplayGraph(displayClone);
+        animator.current.queueSnapshots([snapshot0]);
     }, [layout]);
 
     const randomize = () => {
         const newGraph = Pipeline.generateInitialGraph(layout);
         setGraph(newGraph);
-        setPositionedGraph(newGraph.clone());
+        const newPositionedGraph = newGraph.clone();
+        setPositionedGraph(newPositionedGraph);
+
+        // Apply first snapshot directly, then queue to animator
+        const snapshot0 = captureSnapshot(newGraph);
+        const displayClone = newPositionedGraph.clone();
+        snapshot0.nodes.forEach((nodeSnapshot) => {
+            const node = displayClone.nodes.get(nodeSnapshot.id);
+            if (node) {
+                node.x = nodeSnapshot.x;
+                node.y = nodeSnapshot.y;
+                node.angle = nodeSnapshot.angle;
+            }
+        });
+        setDisplayGraph(displayClone);
+        animator.current.queueSnapshots([]);
     };
 
     const rerunLayout = () => {
@@ -66,10 +133,23 @@ function App() {
 
     const runRelaxPass = () => {
         const graphToRelax = positionedGraph.clone();
-        Pipeline.runRelax(graphToRelax, 10);
-        const snapshot3 = captureSnapshot(graphToRelax);
-        setSnapshotAfter(snapshot3);
+        Pipeline.runRelaxPassWithIntersectionCheck(graphToRelax, 734);
+
+        const snapshot = captureSnapshot(graphToRelax);
+        setSnapshotAfter(snapshot);
         setPositionedGraph(graphToRelax);
+
+        // Update displayGraph immediately to show the result
+        const displayClone = graphToRelax.clone();
+        snapshot.nodes.forEach((nodeSnapshot) => {
+            const node = displayClone.nodes.get(nodeSnapshot.id);
+            if (node) {
+                node.x = nodeSnapshot.x;
+                node.y = nodeSnapshot.y;
+                node.angle = nodeSnapshot.angle;
+            }
+        });
+        setDisplayGraph(displayClone);
     };
 
     const exportSvg = () => {
@@ -113,7 +193,7 @@ function App() {
                 <Inspector graph={positionedGraph} />
             </aside>
             <main style={{ flex: 1, padding: 24 }}>
-                <SvgRenderer graph={positionedGraph} />
+                <SvgRenderer graph={displayGraph.nodes.size > 0 ? displayGraph : positionedGraph} />
             </main>
         </div>
     );

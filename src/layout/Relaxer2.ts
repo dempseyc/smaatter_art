@@ -5,16 +5,14 @@ export interface SpringSettings {
     minLength: number; // minimum edge length
     maxLength: number; // maximum edge length
     targetLength: number; // desired edge length (or average if 0)
-    grow?: number; // optional multiplier for average length, default 1
 }
 
-export class Relaxer {
+export class Relaxer2 {
     private static readonly DEFAULT_SPRINGS: SpringSettings = {
         stiffness: 0.5,
         minLength: 5,
         maxLength: 100,
-        grow: 0.9, // can be + or -
-        targetLength: 0 // 0 means bias toward shorter than average
+        targetLength: 1 // 0.9 means bias toward shorter than average
     };
 
     /**
@@ -43,18 +41,17 @@ export class Relaxer {
      * Border nodes and terminal nodes are fixed anchors.
      * N0 (root) can move.
      */
-    static relax(graph: Graph, iterations: number = 50, springs: SpringSettings = this.DEFAULT_SPRINGS, useBorder: boolean = true): void {
-        const avgLength = springs.targetLength > 0 ? springs.targetLength : this.calculateAverageEdgeLength(graph) * (springs.grow ?? 1);
-        const DAMPING = 0.05; // Damping factor to reduce jitter
-        // Identify anchor nodes (terminal nodes cannot move, and optionally border nodes)
+    static relax(graph: Graph, iterations: number = 50, options: { springs: SpringSettings } = { springs: this.DEFAULT_SPRINGS }): void {
+        const avgLength = options.springs.targetLength > 0 ? options.springs.targetLength : this.calculateAverageEdgeLength(graph);
+
+        // Identify anchor nodes (border and terminal nodes cannot move)
         const anchorIds = new Set<NodeId>();
         for (const node of graph.nodes.values()) {
-            const isTerminal = node.meta.roles.functionalRoles.some(r => r === 'terminal');
-            const isBorder = !useBorder && node.meta.roles.functionalRoles.some(r =>
-                r === 'border' || r === 'border-joint'
+            const isBorder = node.meta.roles.functionalRoles.some(r =>
+                r === 'terminal'
+                // r === 'border' || r === 'terminal' || r === 'border-joint'
             );
-
-            if (isTerminal || isBorder) {
+            if (isBorder) {
                 anchorIds.add(node.id);
             }
         }
@@ -74,11 +71,6 @@ export class Relaxer {
                 const nodeB = graph.nodes.get(edge.b);
                 if (!nodeA || !nodeB) continue;
 
-                // Skip if both nodes are anchors
-                const aIsAnchor = anchorIds.has(edge.a);
-                const bIsAnchor = anchorIds.has(edge.b);
-                if (aIsAnchor && bIsAnchor) continue;
-
                 const dx = nodeB.x - nodeA.x;
                 const dy = nodeB.y - nodeA.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
@@ -90,37 +82,27 @@ export class Relaxer {
 
                 // Calculate spring force
                 const lengthDiff = dist - desiredLength;
-                const forceMagnitude = lengthDiff * springs.stiffness;
+                const forceMagnitude = lengthDiff * options.springs.stiffness;
 
                 // Normalize direction
                 const dirX = dx / dist;
                 const dirY = dy / dist;
 
-                // Calculate forces
+                // Apply force (push apart if too close, pull together if too far)
                 const forceX = dirX * forceMagnitude;
                 const forceY = dirY * forceMagnitude;
 
                 const forceA = forces.get(edge.a)!;
                 const forceB = forces.get(edge.b)!;
 
-                if (!aIsAnchor) {
-                    // Node A can move: apply force
-                    forceA.x += forceX;
-                    forceA.y += forceY;
-                }
-
-                if (!bIsAnchor) {
-                    // Node B can move: apply force
-                    forceB.x -= forceX;
-                    forceB.y -= forceY;
-                }
-
-                // If one is anchor and one is not, the moving node gets all the force
-                // If neither is anchor, forces cancel (as before)
+                forceA.x += forceX;
+                forceA.y += forceY;
+                forceB.x -= forceX;
+                forceB.y -= forceY;
             }
 
             // Apply forces to nodes (except anchors)
-            const damping = DAMPING; // Reduce jitter
+            const damping = 0.3; // Reduce jitter
             for (const node of graph.nodes.values()) {
                 if (anchorIds.has(node.id)) continue; // Skip anchor nodes
 

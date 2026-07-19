@@ -1,5 +1,4 @@
 import { Graph } from './Graph';
-import { Node } from './Node';
 
 // edge and node roles
 export type OrientationRole = 'centered' | 'not-center';
@@ -28,13 +27,11 @@ export class GraphGenerator {
     static generateGraph(): Graph {
 
         const graph = new Graph();
-        // const ranB = Math.ceil(Math.random() * 7); // Number of gen1 nodes
-        // const ranC = Math.ceil(Math.random() * 7); // Number of grandchildren, center parent
-        // const ranD = Math.ceil(Math.random() * 7); // Number of grandchildren, non-center parent
-        // AI AGENT, don't delete these commented out lines
-        const ranB = 6; // Number of gen1 nodes
-        const ranC = 7; // Number of grandchildren, center parent
-        const ranD = 6; // Number of grandchildren, non-center parent
+        const TOGGLE_RANDOM = false; // Set to true to randomize the number of gen1 and gen2 nodes
+
+        const ranB = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 4; // Number of gen1 nodes
+        const ranC = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 4; // Number of grandchildren, center parent
+        const ranD = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 3; // Number of grandchildren, non-center parent
 
         let currentGenIds: string[] = [];
         const centerChildIds: string[] = [];
@@ -427,7 +424,6 @@ export class GraphGenerator {
         let totalAngle = targetNode.angle;
 
         // Collect all edges connected to the merged nodes
-        const edgesToUpdate: string[] = [];
         const nodesToRemove: string[] = [];
 
         for (let i = 1; i < nodeIds.length; i++) {
@@ -515,6 +511,8 @@ export class GraphGenerator {
 
         if (!edge || !node) return;
 
+        console.log(`[GraphGen] derivedEdge: Inserting ${nodeToInsertId} into edge ${edgeId} (${edge.a} -> ${edge.b}) at (${targetX.toFixed(2)}, ${targetY.toFixed(2)})`);
+
         // Snap node to the line segment
         node.x = targetX;
         node.y = targetY;
@@ -534,37 +532,156 @@ export class GraphGenerator {
             metaBase.roles.functionalRoles.push('split');
         }
 
+        const newEdge1Id = `${aId}-${nodeToInsertId}`;
+        const newEdge2Id = `${nodeToInsertId}-${bId}`;
+
+        console.log(`[GraphGen]   Creating edges: ${newEdge1Id} and ${newEdge2Id}`);
+
         graph.addEdge({
-            id: `${aId}-${nodeToInsertId}`,
+            id: newEdge1Id,
             a: aId,
             b: nodeToInsertId,
             meta: metaBase
         });
 
         graph.addEdge({
-            id: `${nodeToInsertId}-${bId}`,
+            id: newEdge2Id,
             a: nodeToInsertId,
             b: bId,
             meta: metaBase
         });
 
         // Delete the original edge
+        console.log(`[GraphGen]   Deleting original edge ${edgeId}`);
         graph.edges.delete(edgeId);
+    }
+
+    static insertNodeIntoEdge(graph: Graph, nodeId: string, edgeId: string, targetX: number, targetY: number): void {
+        const edge = graph.edges.get(edgeId);
+        const node = graph.nodes.get(nodeId);
+
+        if (!edge || !node) return;
+
+        console.log(`[GraphGen] Inserting node ${nodeId} into edge ${edgeId} at (${targetX.toFixed(2)}, ${targetY.toFixed(2)})`);
+
+        // Position the node on the edge
+        node.x = targetX;
+        node.y = targetY;
+
+        const aId = edge.a;
+        const bId = edge.b;
+
+        // Mark node with split and sibling-joint roles
+        if (!node.meta.roles.functionalRoles.includes('split')) {
+            node.meta.roles.functionalRoles.push('split');
+        }
+        if (!node.meta.roles.functionalRoles.includes('sibling-joint')) {
+            node.meta.roles.functionalRoles.push('sibling-joint');
+        }
+        node.meta.roles.ordinality = 'middle';
+        node.meta.roles.orientation = 'not-center';
+
+        // Create new edges with split and sibling-seg roles
+        const edgeRoles: EdgeRoles = {
+            orientation: 'not-center',
+            ordinality: 'middle',
+            functionalRoles: ['split', 'sibling-seg'],
+            modRoles: []
+        };
+
+        const newEdge1Id = `${aId}-${nodeId}`;
+        const newEdge2Id = `${nodeId}-${bId}`;
+
+        console.log(`[GraphGen]   Creating edges: ${newEdge1Id} and ${newEdge2Id}`);
+
+        graph.addEdge({
+            id: newEdge1Id,
+            a: aId,
+            b: nodeId,
+            meta: {
+                roles: edgeRoles,
+                generation: edge.meta.generation,
+                siblingCount: 2,
+                siblingIndex: 0
+            }
+        });
+
+        graph.addEdge({
+            id: newEdge2Id,
+            a: nodeId,
+            b: bId,
+            meta: {
+                roles: edgeRoles,
+                generation: edge.meta.generation,
+                siblingCount: 2,
+                siblingIndex: 1
+            }
+        });
+
+        // Delete the original edge
+        console.log(`[GraphGen]   Deleting original edge ${edgeId}`);
+        graph.edges.delete(edgeId);
+    }
+
+    static splitEdge(graph: Graph, edgeId: string, targetX: number, targetY: number): void {
+        const edge = graph.edges.get(edgeId);
+        if (!edge) return;
+
+        const nodeA = graph.nodes.get(edge.a);
+        const nodeB = graph.nodes.get(edge.b);
+        if (!nodeA || !nodeB) return;
+
+        // Create intermediate node ID
+        const intermediateNodeId = `S-${edgeId}-${Math.random().toString(36).substring(2, 9)}`;
+        console.log(`[GraphGen] Splitting edge ${edgeId} at (${targetX.toFixed(2)}, ${targetY.toFixed(2)}) with node ${intermediateNodeId}`);
+
+        // Calculate angle based on endpoints
+        const angle = (nodeA.angle + nodeB.angle) / 2;
+
+        // Create intermediate node
+        const node = graph.addNode({
+            id: intermediateNodeId,
+            angle: angle,
+            meta: {
+                generation: edge.meta.generation + 1,
+                roles: {
+                    orientation: 'not-center',
+                    ordinality: 'middle',
+                    functionalRoles: ['split'],
+                    modRoles: []
+                }
+            }
+        });
+
+        if (node) {
+            node.x = targetX;
+            node.y = targetY;
+        }
+
+        // Use derivedEdge to split the original edge
+        this.derivedEdge(graph, edgeId, intermediateNodeId, targetX, targetY);
     }
 
     static intersectEdges(graph: Graph, edgeAId: string, edgeBId: string, x: number, y: number): void {
         const edgeA = graph.edges.get(edgeAId);
         const edgeB = graph.edges.get(edgeBId);
-        const angleA = edgeA ? graph.nodes.get(edgeA.a)?.angle : undefined;
-        const angleB = edgeA ? graph.nodes.get(edgeA.b)?.angle : undefined;
-        const angleC = edgeB ? graph.nodes.get(edgeB.a)?.angle : undefined;
-        const angleD = edgeB ? graph.nodes.get(edgeB.b)?.angle : undefined;
+
+        if (!edgeA || !edgeB) {
+            console.log(`[GraphGen] Skipping intersection ${edgeAId} x ${edgeBId}: one or both edges already deleted`);
+            return;
+        }
+
+        const angleA = graph.nodes.get(edgeA.a)?.angle;
+        const angleB = graph.nodes.get(edgeA.b)?.angle;
+        const angleC = graph.nodes.get(edgeB.a)?.angle;
+        const angleD = graph.nodes.get(edgeB.b)?.angle;
         const angle = ((angleA ?? 0) + (angleB ?? 0) + (angleC ?? 0) + (angleD ?? 0)) / 4;
 
-        if (!edgeA || !edgeB) return;
+        // Normalize edge IDs so the same intersection always gets the same node ID
+        const sortedEdgeIds = [edgeAId, edgeBId].sort();
+        const intersectionNodeId = `I-${sortedEdgeIds[0]}-${sortedEdgeIds[1]}`;
+        console.log(`[GraphGen] Creating intersection node ${intersectionNodeId} at (${x.toFixed(2)}, ${y.toFixed(2)}) for edges ${edgeAId} x ${edgeBId}`);
 
-        // Create intersection node
-        const intersectionNodeId = `I-${edgeAId}-${edgeBId}`;
         const node = graph.addNode({
             id: intersectionNodeId,
             angle: angle,
@@ -583,11 +700,29 @@ export class GraphGenerator {
         if (node) {
             node.x = x;
             node.y = y;
+
+            // Check for symmetric twin intersection node (at mirrored x position)
+            const layoutWidth = 734; // Default layout width
+            const symmetricX = layoutWidth - x;
+            const twinIntersection = Array.from(graph.nodes.values()).find(n =>
+                n.id.startsWith('I-') &&
+                Math.abs(n.x - symmetricX) < 1 &&
+                Math.abs(n.y - y) < 1 &&
+                n.id !== intersectionNodeId
+            );
+
+            if (twinIntersection && !node.twinId) {
+                node.twinId = twinIntersection.id;
+                twinIntersection.twinId = node.id;
+                console.log(`[GraphGen] Linked intersection nodes as twins: ${intersectionNodeId} <-> ${twinIntersection.id}`);
+            }
         }
 
         // Split edge A
+        console.log(`[GraphGen] Splitting edge ${edgeAId}`);
         this.derivedEdge(graph, edgeAId, intersectionNodeId, x, y);
         // Split edge B
+        console.log(`[GraphGen] Splitting edge ${edgeBId}`);
         this.derivedEdge(graph, edgeBId, intersectionNodeId, x, y);
     }
 
