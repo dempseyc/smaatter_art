@@ -37,6 +37,7 @@ export class Graph implements GraphData {
 
     clone(): Graph {
         const copy = new Graph();
+        // First pass: create all nodes
         this.nodes.forEach((node) => {
             copy.addNode({
                 id: node.id,
@@ -45,6 +46,8 @@ export class Graph implements GraphData {
                 angle: node.angle,
                 targetX: node.targetX,
                 targetY: node.targetY,
+                parentId: node.parentId,
+                twinId: node.twinId,
                 meta: {
                     roles: { ...node.meta.roles },
                     generation: node.meta.generation,
@@ -52,6 +55,13 @@ export class Graph implements GraphData {
                     siblingCount: node.meta.siblingCount,
                 }
             });
+        });
+        // Second pass: restore twinId references
+        this.nodes.forEach((node) => {
+            const copiedNode = copy.nodes.get(node.id);
+            if (copiedNode && node.twinId) {
+                copiedNode.twinId = node.twinId;
+            }
         });
         this.edges.forEach((edge) => {
             copy.addEdge({ id: edge.id, a: edge.a, b: edge.b, meta: { roles: { ...edge.meta.roles }, generation: edge.meta.generation, siblingCount: edge.meta.siblingCount, siblingIndex: edge.meta.siblingIndex } });

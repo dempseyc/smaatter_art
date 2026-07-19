@@ -209,6 +209,12 @@ export class Pipeline {
             }
         }
 
+        // Link symmetric intersection nodes as twins (for graph symmetry)
+        this.linkSymmetricIntersectionTwins(graph, 734);
+
+        // Link symmetric split nodes that were created from splitting symmetric edges
+        this.linkSymmetricSplitNodeTwins(graph, 734);
+
         // Now create the actual intersection connections between the resolved edges
         const processedIntersections = new Set<string>();
 
@@ -279,6 +285,66 @@ export class Pipeline {
         }
 
         return true;
+    }
+
+    /** Link symmetric split node pairs as twins to maintain symmetry during edge splitting. */
+    private static linkSymmetricSplitNodeTwins(graph: Graph, layoutWidth: number): void {
+        const splitNodes = Array.from(graph.nodes.values()).filter(n =>
+            n.meta.roles.functionalRoles.includes('split') && !n.twinId
+        );
+        const linked = new Set<string>();
+
+        for (const node of splitNodes) {
+            if (linked.has(node.id)) continue;
+
+            const symmetricX = layoutWidth - node.x;
+            const tolerance = 1;
+
+            // Find symmetric node at mirrored x position with similar y
+            const twin = splitNodes.find(n =>
+                n.id !== node.id &&
+                Math.abs(n.x - symmetricX) < tolerance &&
+                Math.abs(n.y - node.y) < tolerance &&
+                !linked.has(n.id)
+            );
+
+            if (twin && !twin.twinId) {
+                node.twinId = twin.id;
+                twin.twinId = node.id;
+                linked.add(node.id);
+                linked.add(twin.id);
+                console.log(`[Pipeline] Linked split node twins: ${node.id} <-> ${twin.id}`);
+            }
+        }
+    }
+
+    /** Link symmetric intersection node pairs as twins to maintain graph symmetry. */
+    private static linkSymmetricIntersectionTwins(graph: Graph, layoutWidth: number): void {
+        const intersectionNodes = Array.from(graph.nodes.values()).filter(n => n.id.startsWith('I-'));
+        const linked = new Set<string>();
+
+        for (const node of intersectionNodes) {
+            if (linked.has(node.id)) continue;
+
+            const symmetricX = layoutWidth - node.x;
+            const tolerance = 1;
+
+            // Find symmetric node at mirrored x position
+            const twin = intersectionNodes.find(n =>
+                n.id !== node.id &&
+                Math.abs(n.x - symmetricX) < tolerance &&
+                Math.abs(n.y - node.y) < tolerance &&
+                !linked.has(n.id)
+            );
+
+            if (twin) {
+                node.twinId = twin.id;
+                twin.twinId = node.id;
+                linked.add(node.id);
+                linked.add(twin.id);
+                console.log(`[Pipeline] Linked intersection twins: ${node.id} <-> ${twin.id}`);
+            }
+        }
     }
 
     /** Helper: find which segment a point (at parameter t) falls within */
@@ -402,10 +468,23 @@ export class Pipeline {
 
         const edgesToSplit: { edgeId: string; targetX: number; targetY: number }[] = [];
         const ratio: number = 1; // edges longer than this ratio of the average will be split
-        // only use right half of graph and apply to twins.
+        // only use right half of graph and apply to twins. no border edges, no terminal edges, no edges that are already split (have a node with exactly 2 edges connected to it)
+
         const rightHalfEdges = Array.from(currentGraph.edges.values()).filter(e => {
             const nodeA = currentGraph.nodes.get(e.a);
             const nodeB = currentGraph.nodes.get(e.b);
+            const isBorderOrTerminal = (node: Node | undefined) => {
+                if (!node) return true;
+                const exclusions = node.meta.roles.functionalRoles.some(r => r === 'border' || r === 'border-joint' || r === 'terminal');
+                return exclusions;
+            };
+            if (isBorderOrTerminal(nodeA) || isBorderOrTerminal(nodeB)) return false;
+            const isSplitNode = (node: Node | undefined) => {
+                if (!node) return false;
+                const connectedEdges = Array.from(currentGraph.edges.values()).filter(edge => edge.a === node.id || edge.b === node.id);
+                return connectedEdges.length === 2; // exactly 2 edges means it's a split node
+            };
+            if (isSplitNode(nodeA) || isSplitNode(nodeB)) return false;
             if (!nodeA || !nodeB) return false;
             return nodeA.x > width / 2 && nodeB.x > width / 2;
         });
@@ -420,31 +499,31 @@ export class Pipeline {
             return directTwin || reversedTwin;
         }).filter(e => e !== null);
 
-        // check if twin edges exist for each right half edge
+        // there should be a twin edge for every right half edge, if not, log a warning
+        if (twinEdges.length !== rightHalfEdges.length) {
+            console.warn(`Warning: Not all right half edges have twin edges. Right half edges: ${rightHalfEdges.length}, Twin edges: ${twinEdges.length}`);
+        }
+
         for (let i = 0; i < rightHalfEdges.length; i++) {
             const e = rightHalfEdges[i];
-            const twinEdge = twinEdges[i];
-            if (!twinEdge) continue; // no twin edge, skip
+            const precomputedTwinEdge = twinEdges[i];
+            if (!precomputedTwinEdge) continue; // no twin edge, skip
             const nodeA = currentGraph.nodes.get(e.a);
             const nodeB = currentGraph.nodes.get(e.b);
             if (!nodeA || !nodeB) continue;
             const dx = nodeA.x - nodeB.x;
             const dy = nodeA.y - nodeB.y;
             const length = Math.sqrt(dx * dx + dy * dy);
-            const splitChance = parseFloat((length / Relaxer.calculateAverageEdgeLength(currentGraph) * Math.random()).toFixed(2));
+            const splitChance = parseFloat((length / Relaxer.calculateAverageEdgeLength(currentGraph) * Math.random() * 3).toFixed(2));
             console.log(`Edge ${e.id} length: ${length.toFixed(2)}, splitChance: ${splitChance.toFixed(2)}, ratio: ${ratio}`);
             if (splitChance > ratio) {
-                const twinEdge = currentGraph.edges.get(`${nodeA.twinId}-${nodeB.twinId}`);
-                if (twinEdge) {
-                    edgesToSplit.push({
-                        edgeId: twinEdge.id,
-                        targetX: (currentGraph.nodes.get(twinEdge.a)!.x + currentGraph.nodes.get(twinEdge.b)!.x) / 2,
-                        targetY: (currentGraph.nodes.get(twinEdge.a)!.y + currentGraph.nodes.get(twinEdge.b)!.y) / 2
-                    });
-                    console.log(`Edge ${e.id} has twin edge ${twinEdge.id}, will split both.`);
-                } else {
-                    console.log(`Edge ${e.id} has no twin edge, will split only this edge.`);
-                }
+                // Use precomputed twin edge (already checked both directions)
+                edgesToSplit.push({
+                    edgeId: precomputedTwinEdge.id,
+                    targetX: (currentGraph.nodes.get(precomputedTwinEdge.a)!.x + currentGraph.nodes.get(precomputedTwinEdge.b)!.x) / 2,
+                    targetY: (currentGraph.nodes.get(precomputedTwinEdge.a)!.y + currentGraph.nodes.get(precomputedTwinEdge.b)!.y) / 2
+                });
+                console.log(`Edge ${e.id} has twin edge ${precomputedTwinEdge.id}, will split both.`);
                 edgesToSplit.push({
                     edgeId: e.id,
                     targetX: (nodeA.x + nodeB.x) / 2,

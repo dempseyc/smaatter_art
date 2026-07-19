@@ -27,11 +27,11 @@ export class GraphGenerator {
     static generateGraph(): Graph {
 
         const graph = new Graph();
-        const TOGGLE_RANDOM = false; // Set to true to randomize the number of gen1 and gen2 nodes
+        const TOGGLE_RANDOM = true; // Set to true to randomize the number of gen1 and gen2 nodes
 
-        const ranB = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 7; // Number of gen1 nodes
+        const ranB = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 5; // Number of gen1 nodes
         const ranC = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 1; // Number of grandchildren, center parent
-        const ranD = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 7; // Number of grandchildren, non-center parent
+        const ranD = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 3; // Number of grandchildren, non-center parent
 
         let currentGenIds: string[] = [];
         const centerChildIds: string[] = [];
