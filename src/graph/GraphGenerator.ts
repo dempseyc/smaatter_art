@@ -624,11 +624,13 @@ export class GraphGenerator {
     }
 
     static splitEdge(graph: Graph, edgeId: string, targetX: number, targetY: number): void {
+
         const edge = graph.edges.get(edgeId);
         if (!edge) return;
 
         const nodeA = graph.nodes.get(edge.a);
         const nodeB = graph.nodes.get(edge.b);
+
         if (!nodeA || !nodeB) return;
 
         // Create intermediate node ID
@@ -643,7 +645,7 @@ export class GraphGenerator {
             id: intermediateNodeId,
             angle: angle,
             meta: {
-                generation: edge.meta.generation + 1,
+                generation: edge.meta.generation + 2,
                 roles: {
                     orientation: 'not-center',
                     ordinality: 'middle',

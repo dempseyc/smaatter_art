@@ -26,7 +26,7 @@
 
 .even {
     stroke: green;
-    stroke-width: 5px;
+    stroke-width: 3px;
 }
 
 .mod3 {
@@ -60,7 +60,35 @@
     stroke: cyan;
 }
 
-/* .edge {
+
+.spoke {
+    stroke: darkcyan;
+    stroke-width: 3px;
+}
+
+.merged {
+    fill: darkcyan;
+    stroke: white;
+    stroke-width: 3px;
+}
+
+.dotted {
+    stroke-dasharray: 5, 5;
+}
+
+.sibling-seg {
+    stroke: magenta;
+    stroke-width: 2px;
+}
+
+.border-joint {
+    stroke: gray;
+    fill: black;
+    stroke-width: 3px;
+}
+
+
+.edge {
     stroke: black;
     stroke-width: 2px;
-} */
+}

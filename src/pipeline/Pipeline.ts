@@ -497,11 +497,12 @@ export class Pipeline {
             const directTwin = nodeA.twinId && nodeB.twinId ? currentGraph.edges.get(`${nodeA.twinId}-${nodeB.twinId}`) : null;
             const reversedTwin = nodeA.twinId && nodeB.twinId ? currentGraph.edges.get(`${nodeB.twinId}-${nodeA.twinId}`) : null;
             return directTwin || reversedTwin;
-        }).filter(e => e !== null);
+        });
 
         // there should be a twin edge for every right half edge, if not, log a warning
-        if (twinEdges.length !== rightHalfEdges.length) {
-            console.warn(`Warning: Not all right half edges have twin edges. Right half edges: ${rightHalfEdges.length}, Twin edges: ${twinEdges.length}`);
+        const validTwinCount = twinEdges.filter(e => e !== null).length;
+        if (validTwinCount !== rightHalfEdges.length) {
+            console.warn(`Warning: Not all right half edges have twin edges. Right half edges: ${rightHalfEdges.length}, Twin edges with twins: ${validTwinCount}`);
         }
 
         for (let i = 0; i < rightHalfEdges.length; i++) {
@@ -534,7 +535,7 @@ export class Pipeline {
         snapshots.push(captureSnapshot(currentGraph));
 
         for (const split of edgesToSplit) {
-            GraphGenerator.splitEdge(currentGraph, split.edgeId, split.targetX, split.targetY);
+            GraphGenerator.splitEdge(currentGraph, split.edgeId, split.targetX, split.targetY)
         }
 
         snapshots.push(captureSnapshot(currentGraph));

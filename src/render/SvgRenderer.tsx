@@ -8,7 +8,8 @@ interface SvgRendererProps {
 
 const width = 734;
 const height = 734;
-const size = 5; // Size of the node shapes
+const scale = .03; // 
+const pixels = 1; // Base size for nodes, scaled by generation
 
 
 export function SvgRenderer({ graph }: SvgRendererProps) {
@@ -29,7 +30,7 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
     }
 
     const edgeCSSclasses = (edge: any) => {
-        const classes = ['edge'];
+        const classes = ['edge', 'dotted'];
         const roles = edge.meta?.roles;
         if (roles && typeof roles === 'object') {
             // If roles is an object with arrays or strings as values
@@ -55,6 +56,7 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
             })()}
             <text x={0} y={4} className={`${id} label`} textAnchor="middle" fill="white"></text>
         </g>
+
     );
 
     const Triangle = ({ id, x, y, angle, size, className }: { id: string; x: number; y: number; angle: number; size: number; className: string }) => (
@@ -81,7 +83,8 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
                     return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={edgeCSSclasses(edge)} />;
                 })}
                 {Array.from(graph.nodes.values()).map((node) => {
-                    return <Triangle key={node.id} id={node.id} x={node.x} y={node.y} angle={node.angle} size={size} className={nodeCSSclasses(node)} />;
+                    const s = width * scale / ((node.meta.generation + 1) * pixels); // Size based on generation
+                    return <Dot key={node.id} id={node.id} x={node.x} y={node.y} angle={node.angle} size={s} className={nodeCSSclasses(node)} />;
                 })}
             </svg>
         </div>
