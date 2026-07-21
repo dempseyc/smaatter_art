@@ -9,7 +9,7 @@ export class Animator {
     private queue: GraphSnapshot[] = [];
     private currentIndex = 0;
     private isPlaying = false;
-    private frameRate = 200; // milliseconds per frame
+    private frameRate = 1000; // milliseconds per frame
     private intervalId: number | null = null;
     private onFrameCallback: ((snapshot: GraphSnapshot, index: number, total: number) => void) | null = null;
 

@@ -97,17 +97,3 @@ export function captureSnapshot(graph: Graph): GraphSnapshot {
     return { nodes, edges };
 }
 
-/**
- * After mutations, promote the snapshot positions to weighted targets:
- *  - Surviving nodes (id present in snapshot) → target = snapshot position.
- *  - New nodes (created by splits/intersects/merges) → target = their computed position.
- * Targets persist until the node is removed, giving layout algorithms a stable anchor.
- */
-export function applySnapshotAsTargets(graph: Graph, snapshot: GraphSnapshot): void {
-    graph.nodes.forEach((node) => {
-        const snap = snapshot.nodes.get(node.id);
-        node.targetX = snap ? snap.x : node.x;
-        node.targetY = snap ? snap.y : node.y;
-    });
-}
-

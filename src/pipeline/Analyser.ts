@@ -1,8 +1,8 @@
 import { Graph, NodeId } from '../graph/Graph';
 import type { EdgeRoles } from '../graph/GraphGenerator';
 
-export type MergeOperation = {
-    type: 'merge';
+export type ClusterOperation = {
+    type: 'nodeCluster';
     nodes: NodeId[];
 };
 
@@ -41,7 +41,7 @@ export type NodeLineIntersectionOperation = {
     targetY: number;
 };
 
-export type GraphOperation = MergeOperation | ExpandOperation | EdgeSplitOperation | IntersectionOperation | ConnectNeighborOperation | NodeLineIntersectionOperation;
+export type GraphOperation = ClusterOperation | ExpandOperation | EdgeSplitOperation | IntersectionOperation | ConnectNeighborOperation | NodeLineIntersectionOperation;
 
 export class Analyser {
 
@@ -50,10 +50,10 @@ export class Analyser {
      * and recommends merging them into a single cluster node.
      * Distance threshold is based on layout geometry width/32
      */
-    static findMergeableNodes(graph: Graph, width: number): MergeOperation[] {
-        const ops: MergeOperation[] = [];
+    static findNodeClusters(graph: Graph, width: number): ClusterOperation[] {
+        const ops: ClusterOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
-        const threshold = width / 24; // Tighter threshold for merging
+        const threshold = width / 10; // Tighter threshold for merging
 
         const isMutable = (roles: string[]) => !roles.some(r =>
             r === 'border' || r === 'border-joint' || r === 'terminal' || r === 'to-border' || r === 'centered' || r === 'gen0'
@@ -77,9 +77,9 @@ export class Analyser {
 
                 const dx = nodeA.x - nodeB.x;
                 const dy = nodeA.y - nodeB.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
+                const sqDist = dx * dx + dy * dy;
 
-                if (dist < threshold) {
+                if (sqDist < threshold) {
                     proximityMap.get(nodeA.id)!.add(nodeB.id);
                     proximityMap.get(nodeB.id)!.add(nodeA.id);
                 }
@@ -108,7 +108,7 @@ export class Analyser {
             }
 
             if (cluster.length > 1) {
-                ops.push({ type: 'merge', nodes: cluster });
+                ops.push({ type: 'nodeCluster', nodes: cluster });
             }
         }
 
@@ -148,7 +148,7 @@ export class Analyser {
     static findConnectableNeighbors(graph: Graph, width: number): ConnectNeighborOperation[] {
         const ops: ConnectNeighborOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
-        const threshold = width / 32;
+        const threshold = width / 16;
 
         for (let i = 0; i < nodes.length; i++) {
             const nodeA = nodes[i];
@@ -186,12 +186,12 @@ export class Analyser {
      * Finds nodes that are very close to edges (within a small distance threshold).
      * These nodes should be snapped onto the edge and the edge split at that point.
      */
-    static findNodeLineIntersections(graph: Graph): NodeLineIntersectionOperation[] {
+    static findNodeLineIntersections(graph: Graph, width: number): NodeLineIntersectionOperation[] {
         const ops: NodeLineIntersectionOperation[] = [];
         const nodes = Array.from(graph.nodes.values());
         const edges = Array.from(graph.edges.values());
 
-        const threshold = 5; // Distance threshold for snapping nodes to edges
+        const threshold = width / 24; // Distance threshold for snapping nodes to edges
 
         // Helper to calculate distance from point to line segment
         const pointToLineDistance = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
@@ -234,7 +234,7 @@ export class Analyser {
 
                 if (result.distance < threshold && result.t > 0.05 && result.t < 0.95) {
                     // Only snap if it's truly between the endpoints, not too close to either
-                    console.log(`[Analyser] Found node ${node.id} close to edge ${edge.id} at distance ${result.distance.toFixed(2)}`);
+                    // console.log(`[Analyser] Found node ${node.id} close to edge ${edge.id} at distance ${result.distance.toFixed(2)}`);
                     ops.push({
                         type: 'node-line-intersect',
                         nodeId: node.id,
@@ -262,7 +262,7 @@ export class Analyser {
             if (!useToBorder && edge.meta.roles.functionalRoles.includes('border-chain')) return false;
             // Optionally skip edges that already connect to intersection nodes (prevent cascading)
             if (skipIntersectionEdges && (edge.a.startsWith('I-') || edge.b.startsWith('I-'))) {
-                console.log(`[Analyser] Skipping edge ${edge.id} - connects to intersection node`);
+                // console.log(`[Analyser] Skipping edge ${edge.id} - connects to intersection node`);
                 return false;
             }
             return true;
@@ -348,7 +348,7 @@ export class Analyser {
                     });
 
                     if (!hasNodeNear && !hasOpNear) {
-                        console.log(`[Analyser] Found intersection: ${edgeA.id} x ${edgeB.id} at (${result.x.toFixed(2)}, ${result.y.toFixed(2)})`);
+                        // console.log(`[Analyser] Found intersection: ${edgeA.id} x ${edgeB.id} at (${result.x.toFixed(2)}, ${result.y.toFixed(2)})`);
                         ops.push({
                             type: 'intersect',
                             edgeA: edgeA.id,
@@ -362,7 +362,7 @@ export class Analyser {
                         const twinEdgeB = findTwinEdge(edgeB);
                         if (twinEdgeA && twinEdgeB) {
                             const symmetricX = layoutWidth - result.x;
-                            console.log(`[Analyser] Creating symmetric intersection for twins: ${twinEdgeA.id} x ${twinEdgeB.id} at (${symmetricX.toFixed(2)}, ${result.y.toFixed(2)})`);
+                            // console.log(`[Analyser] Creating symmetric intersection for twins: ${twinEdgeA.id} x ${twinEdgeB.id} at (${symmetricX.toFixed(2)}, ${result.y.toFixed(2)})`);
                             ops.push({
                                 type: 'intersect',
                                 edgeA: twinEdgeA.id,
@@ -424,7 +424,7 @@ export class Analyser {
                 }
             }
 
-            console.log(`[BorderConn] Joint ${joint.id}: found ${nearestNodes.length} equidistant node(s) at distance ${minDistance.toFixed(2)}: ${nearestNodes.join(', ')}`);
+            // console.log(`[BorderConn] Joint ${joint.id}: found ${nearestNodes.length} equidistant node(s) at distance ${minDistance.toFixed(2)}: ${nearestNodes.join(', ')}`);
 
             for (const targetNodeId of nearestNodes) {
                 // Verify edge doesn't already exist
@@ -434,7 +434,7 @@ export class Analyser {
                 );
 
                 if (!hasEdge) {
-                    console.log(`[BorderConn]   → Connecting to ${targetNodeId}`);
+                    // console.log(`[BorderConn]   → Connecting to ${targetNodeId}`);
                     ops.push({
                         type: 'connect-neighbor',
                         sourceId: joint.id,
@@ -442,7 +442,7 @@ export class Analyser {
                         roles: { functionalRoles: ['to-border'], orientation: 'not-center', ordinality: 'middle', modRoles: [] }
                     });
                 } else {
-                    console.log(`[BorderConn]   → Edge to ${targetNodeId} already exists, skipping`);
+                    // console.log(`[BorderConn]   → Edge to ${targetNodeId} already exists, skipping`);
                 }
             }
         }

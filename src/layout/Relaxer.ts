@@ -1,20 +1,39 @@
 import { Graph, NodeId } from '../graph/Graph';
+import { DEFAULT_FORCE_PROVIDERS, type ForceProvider, type ForceToolkitSettings, type SpringSettings, type WeightedTarget } from './forces';
 
-export interface SpringSettings {
-    stiffness?: number; // 0-1, how strongly edges pull
-    minLength?: number; // minimum edge length
-    maxLength?: number; // maximum edge length
-    targetLength?: number; // desired edge length (or average if 0)
-    grow?: number; // optional multiplier for average length, default 1
-}
+export type { SpringSettings, MinDistForceSettings, ForceToolkitSettings } from './forces';
 
 export class Relaxer {
+    private static readonly FORCE_PROVIDERS: ForceProvider[] = DEFAULT_FORCE_PROVIDERS;
+
     private static readonly DEFAULT_SPRINGS: SpringSettings = {
         stiffness: 0.5,
         minLength: 5,
         maxLength: 100,
-        grow: 0.9, // can be + or -
+        grow: 1.2, // can be + or -
         targetLength: 0 // 0 means bias toward shorter than average
+    };
+
+    private static readonly DEFAULT_FORCE_TOOLKIT: ForceToolkitSettings = {
+        increment: 0.08,
+        edgeTargetWeight: 1,
+        minDistForce: {
+            enabled: true,
+            minDist: 24,
+            weight: 1,
+            excludeBorder: true,
+            excludeTerminal: true,
+        },
+        squareLensingForce: {
+            enabled: true,
+            roundness: 1,
+            weight: 0.9,
+            maxRadialScale: 1.35,
+            includeAnchors: true,
+            excludeBorder: false,
+            excludeTerminal: false,
+            debug: true,
+        },
     };
 
     /**
@@ -39,97 +58,121 @@ export class Relaxer {
     }
 
     /**
-     * Run relaxation iterations on the graph.
-     * Border nodes and terminal nodes are fixed anchors.
-     * N0 (root) can move.
+     * Force-toolkit relaxer with incremental retargeting.
+     * Forces produce weighted target positions, then each node moves toward its blended target each increment.
      */
-    static relax(graph: Graph, iterations: number = 50, springs: SpringSettings = {}, useBorder: boolean = true): void {
-        // Merge provided springs with defaults (defaults used unless overridden)
-        const settings = { ...this.DEFAULT_SPRINGS, ...springs };
-        const avgLength = settings.targetLength! > 0 ? settings.targetLength! : this.calculateAverageEdgeLength(graph) * (settings.grow ?? 1);
-        const DAMPING = 0.05; // Damping factor to reduce jitter
-        // Identify anchor nodes (terminal nodes cannot move, and optionally border nodes)
+    static relaxWithForces(
+        graph: Graph,
+        iterations: number = 50,
+        springs: SpringSettings = {},
+        toolkit: ForceToolkitSettings = {},
+        useBorder: boolean = false
+    ): void {
+        const springSettings = { ...this.DEFAULT_SPRINGS, ...springs };
+        const minDistDefaults = this.DEFAULT_FORCE_TOOLKIT.minDistForce ?? {};
+        const minDistForce = {
+            ...minDistDefaults,
+            ...(toolkit.minDistForce ?? {}),
+        };
+        const squareLensingDefaults = this.DEFAULT_FORCE_TOOLKIT.squareLensingForce ?? {};
+        const squareLensingForce = {
+            ...squareLensingDefaults,
+            ...(toolkit.squareLensingForce ?? {}),
+        };
+        const forceSettings: ForceToolkitSettings = {
+            ...this.DEFAULT_FORCE_TOOLKIT,
+            ...toolkit,
+            minDistForce,
+            squareLensingForce,
+        };
+
+        const anchorIds = this.getAnchorIds(graph, useBorder);
+        const avgLength = springSettings.targetLength! > 0
+            ? springSettings.targetLength!
+            : this.calculateAverageEdgeLength(graph) * (springSettings.grow ?? 1);
+
+        const addTarget = (
+            targets: Map<NodeId, WeightedTarget>,
+            nodeId: NodeId,
+            x: number,
+            y: number,
+            weight: number
+        ): void => {
+            if (weight <= 0) return;
+            const current = targets.get(nodeId);
+            if (!current) {
+                targets.set(nodeId, { x: x * weight, y: y * weight, w: weight });
+                return;
+            }
+            current.x += x * weight;
+            current.y += y * weight;
+            current.w += weight;
+        };
+
+        for (let iter = 0; iter < iterations; iter++) {
+            const targets = new Map<NodeId, WeightedTarget>();
+
+            for (const node of graph.nodes.values()) {
+                // Initialize targets for all nodes to 0 
+                targets.set(node.id, { x: 0, y: 0, w: 0 });
+            }
+
+            const forceContext = {
+                graph,
+                anchorIds,
+                avgLength,
+                springSettings,
+                forceSettings,
+            };
+
+            // Execute enabled force providers and aggregate all target proposals.
+            for (const provider of this.FORCE_PROVIDERS) {
+                if (!provider.isEnabled(forceContext)) continue;
+                const forceTargets = provider.getTargets(forceContext);
+                if (iter === 0 && forceSettings.squareLensingForce?.debug) {
+                    // console.log(`[Relaxer] provider=${provider.key} targets=${forceTargets.length}`);
+                }
+                for (const target of forceTargets) {
+                    addTarget(targets, target.nodeId, target.x, target.y, target.weight);
+                }
+            }
+
+            if (iter === 0 && forceSettings.squareLensingForce?.debug) {
+                // console.log(
+                //     `[Relaxer] mode=forces increment=${forceSettings.increment ?? 0.08} useBorder=${useBorder} ` +
+                //     `squareLensing=${JSON.stringify(forceSettings.squareLensingForce)}`
+                // );
+            }
+
+            // Apply weighted targets incrementally, then retarget next iteration.
+            const increment = forceSettings.increment ?? 0.08;
+            const allowAnchorMove = Boolean(
+                forceSettings.squareLensingForce?.enabled && forceSettings.squareLensingForce?.includeAnchors
+            );
+            for (const node of graph.nodes.values()) {
+                if (anchorIds.has(node.id) && !allowAnchorMove) continue;
+                const target = targets.get(node.id);
+                if (!target || target.w <= 0) continue;
+
+                const tx = target.x / target.w;
+                const ty = target.y / target.w;
+                node.x += (tx - node.x) * increment;
+                node.y += (ty - node.y) * increment;
+            }
+        }
+    }
+
+    private static getAnchorIds(graph: Graph, useBorder: boolean): Set<NodeId> {
         const anchorIds = new Set<NodeId>();
         for (const node of graph.nodes.values()) {
             const isTerminal = node.meta.roles.functionalRoles.some(r => r === 'terminal');
             const isBorder = !useBorder && node.meta.roles.functionalRoles.some(r =>
                 r === 'border' || r === 'border-joint'
             );
-
             if (isTerminal || isBorder) {
                 anchorIds.add(node.id);
             }
         }
-
-        // Iterate relaxation
-        for (let iter = 0; iter < iterations; iter++) {
-            const forces = new Map<NodeId, { x: number; y: number }>();
-
-            // Initialize forces
-            for (const node of graph.nodes.values()) {
-                forces.set(node.id, { x: 0, y: 0 });
-            }
-
-            // Calculate spring forces from edges
-            for (const edge of graph.edges.values()) {
-                const nodeA = graph.nodes.get(edge.a);
-                const nodeB = graph.nodes.get(edge.b);
-                if (!nodeA || !nodeB) continue;
-
-                // Skip if both nodes are anchors
-                const aIsAnchor = anchorIds.has(edge.a);
-                const bIsAnchor = anchorIds.has(edge.b);
-                if (aIsAnchor && bIsAnchor) continue;
-
-                const dx = nodeB.x - nodeA.x;
-                const dy = nodeB.y - nodeA.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                if (dist < 0.001) continue; // Skip coincident nodes
-
-                // Calculate desired length
-                const desiredLength = avgLength;
-
-                // Calculate spring force
-                const lengthDiff = dist - desiredLength;
-                const forceMagnitude = lengthDiff * settings.stiffness!;
-
-                // Normalize direction
-                const dirX = dx / dist;
-                const dirY = dy / dist;
-
-                // Calculate forces
-                const forceX = dirX * forceMagnitude;
-                const forceY = dirY * forceMagnitude;
-
-                const forceA = forces.get(edge.a)!;
-                const forceB = forces.get(edge.b)!;
-
-                if (!aIsAnchor) {
-                    // Node A can move: apply force
-                    forceA.x += forceX;
-                    forceA.y += forceY;
-                }
-
-                if (!bIsAnchor) {
-                    // Node B can move: apply force
-                    forceB.x -= forceX;
-                    forceB.y -= forceY;
-                }
-
-                // If one is anchor and one is not, the moving node gets all the force
-                // If neither is anchor, forces cancel (as before)
-            }
-
-            // Apply forces to nodes (except anchors)
-            const damping = DAMPING; // Reduce jitter
-            for (const node of graph.nodes.values()) {
-                if (anchorIds.has(node.id)) continue; // Skip anchor nodes
-
-                const force = forces.get(node.id)!;
-                node.x += force.x * damping;
-                node.y += force.y * damping;
-            }
-        }
+        return anchorIds;
     }
 }

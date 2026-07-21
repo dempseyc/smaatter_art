@@ -27,12 +27,15 @@ export class GraphGenerator {
     static generateGraph(): Graph {
 
         const graph = new Graph();
-        const TOGGLE_RANDOM = true; // Set to true to randomize the number of gen1 and gen2 nodes
+        const TOGGLE_RANDOM = false; // Set to true to randomize the numbers of nodes.
+        const ranA = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 7; // Number of gen1 nodes
+        const ranC = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 4; // Number of gen3, center parent
+        const ranD = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 4; // Number of gen3, non-center parent
+        const ranB = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 5; // Number of gen2 nodes
+        const ranE = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 1; // Number of gen4, center parent
+        const ranF = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 3; // Number of gen4, non-center parent
 
-        const ranB = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 5; // Number of gen1 nodes
-        const ranC = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 1; // Number of grandchildren, center parent
-        const ranD = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 3; // Number of grandchildren, non-center parent
-
+        console.log("numbers", ranA, ranC, ranD);
         let currentGenIds: string[] = [];
         const centerChildIds: string[] = [];
 
@@ -40,7 +43,7 @@ export class GraphGenerator {
         graph.addNode({ id: '0', angle: 0, meta: { generation: 0, roles: { functionalRoles: ['gen0', 'hub',], modRoles: ['odd', 'mod3'], orientation: 'centered', ordinality: 'end' } } });
 
         // create gen1 nodes and connect them to parent.  connect siblings in a chain, with the last one connecting back to the first
-        for (let i = 0; i < ranB; i++) {
+        for (let i = 0; i < ranA; i++) {
             const gen1Id = `N${i}`;
             const nodeRoles: NodeRoles = {
                 orientation: 'not-center',
@@ -55,19 +58,19 @@ export class GraphGenerator {
                 modRoles: [],
             };
             // in radians
-            const angle = (Math.PI * 2 / ranB) * i + Math.PI / ranB;
+            const angle = (Math.PI * 2 / ranA) * i + Math.PI / ranA;
 
             const orientation =
-                ranB % 2 !== 0 && i === Math.floor(ranB / 2) ? 'centered'
+                ranA % 2 !== 0 && i === Math.floor(ranA / 2) ? 'centered'
                     : 'not-center';
             // set roles for child siblings and edges
             nodeRoles.orientation = orientation;
-            if (i === 0 || i === ranB - 1) { edgeRoles.ordinality = 'end'; nodeRoles.ordinality = 'end'; }
+            if (i === 0 || i === ranA - 1) { edgeRoles.ordinality = 'end'; nodeRoles.ordinality = 'end'; }
             else { edgeRoles.ordinality = 'middle'; nodeRoles.ordinality = 'middle'; }
             // only apply odd, even labels to odd groups of spokes
-            if ((ranB % 2 !== 0) && ranB > 3) { nodeRoles.modRoles.push(i % 2 === 0 ? 'odd' : 'even'); edgeRoles.modRoles.push(i % 2 === 0 ? 'odd' : 'even') }
-            // if ranB is one more than mod3 === 0, start with first child, then every other three
-            if (ranB % 3 === 1 && i % 3 === 0 && ranB > 6) { nodeRoles.modRoles.push('mod3'); edgeRoles.modRoles.push('mod3') }
+            if ((ranA % 2 !== 0) && ranA > 3) { nodeRoles.modRoles.push(i % 2 === 0 ? 'odd' : 'even'); edgeRoles.modRoles.push(i % 2 === 0 ? 'odd' : 'even') }
+            // if ranA is one more than mod3 === 0, start with first child, then every other three
+            if (ranA % 3 === 1 && i % 3 === 0 && ranA > 6) { nodeRoles.modRoles.push('mod3'); edgeRoles.modRoles.push('mod3') }
 
             graph.addEdge({
                 id: `N-${gen1Id}`,
@@ -76,7 +79,7 @@ export class GraphGenerator {
                 meta: {
                     roles: edgeRoles,
                     generation: 1,
-                    siblingCount: ranB,
+                    siblingCount: ranA,
                     siblingIndex: i,
                 }
             });
@@ -88,7 +91,7 @@ export class GraphGenerator {
                     roles: nodeRoles,
                     generation: 1,
                     siblingIndex: i,
-                    siblingCount: ranB
+                    siblingCount: ranA
                 }
             });
             currentGenIds.push(gen1Id);
@@ -103,14 +106,14 @@ export class GraphGenerator {
 
             // set roles
             // don't set for edges
-            if (i === 0 || i === ranB - 1) { nodeRoles.ordinality = 'end'; }
+            if (i === 0 || i === ranA - 1) { nodeRoles.ordinality = 'end'; }
 
             // don't apply odd even to loop chain            
-            // if ranB is one more than mod3 === 0, start with first child, then every other three
-            if (ranB % 3 === 1 && i % 3 === 0 && ranB > 6) { siblingEdgeRoles.modRoles.push('mod3'); edgeRoles.modRoles.push('mod3') }
+            // if ranA is one more than mod3 === 0, start with first child, then every other three
+            if (ranA % 3 === 1 && i % 3 === 0 && ranA > 6) { siblingEdgeRoles.modRoles.push('mod3'); edgeRoles.modRoles.push('mod3') }
 
             // Connect gen1 nodes in a chain and connect the last one to the first
-            if (i + 1 === ranB) {
+            if (i + 1 === ranA) {
                 graph.addEdge({
                     id: `${gen1Id}-${currentGenIds[0]}`,
                     a: gen1Id,
@@ -118,7 +121,7 @@ export class GraphGenerator {
                     meta: {
                         roles: siblingEdgeRoles,
                         generation: 1,
-                        siblingCount: ranB,
+                        siblingCount: ranA,
                         siblingIndex: i,
                     }
                 });
@@ -126,11 +129,9 @@ export class GraphGenerator {
             if (i > 0) {
                 const from = currentGenIds[i - 1];
                 const to = gen1Id;
-                graph.addEdge({ id: `${from}-${to}`, a: from, b: to, meta: { roles: siblingEdgeRoles, generation: 1, siblingCount: ranB, siblingIndex: i } });
+                graph.addEdge({ id: `${from}-${to}`, a: from, b: to, meta: { roles: siblingEdgeRoles, generation: 1, siblingCount: ranA, siblingIndex: i } });
             }
         }
-        // initial build done
-        //
 
         // Create ranC (center) or ranD child nodes for a set of parents
         const addChildNodes = (parentIds: string[], ranC: number, ranD: number, generation: number): string[] => {
@@ -330,8 +331,8 @@ export class GraphGenerator {
                 endAngle += Math.PI * 2;
             }
 
-            // Create ranB - 1 nodes between them
-            const chainNodeCount = ranB - 1;
+            // Create ranA - 1 nodes between them
+            const chainNodeCount = ranA - 1;
             let prevNodeId = startBorderId;
 
             for (let c = 1; c <= chainNodeCount; c++) {
@@ -390,7 +391,7 @@ export class GraphGenerator {
                     meta: { roles: finalChainEdgeRoles, generation: 3, siblingCount: chainNodeCount, siblingIndex: chainNodeCount }
                 });
             } else {
-                // If chainNodeCount is 0 (ranB was 1), connect start to end directly
+                // If chainNodeCount is 0 (ranA was 1), connect start to end directly
                 const directChainEdgeRoles: EdgeRoles = {
                     orientation: 'not-center',
                     ordinality: 'middle',
@@ -407,6 +408,76 @@ export class GraphGenerator {
         }
 
         return graph;
+    }
+
+    // build done before merge and relax
+
+    // if only 2 nodes, merge them. if 3 or more, chain them in order of angle from center point.
+    static chainNodes(graph: Graph, nodeIds: string[], edgeRoles: EdgeRoles): void {
+        if (nodeIds.length <= 3) {
+            return this.mergeNodes(graph, nodeIds);
+        };
+        // Build deterministic angles around the cluster centroid (no parent-angle offset needed).
+        const existingNodes = nodeIds
+            .map(id => graph.nodes.get(id))
+            .filter((n): n is NonNullable<typeof n> => Boolean(n));
+
+        if (existingNodes.length <= 3) {
+            return this.mergeNodes(graph, existingNodes.map(n => n.id));
+        }
+
+        let totalX = 0;
+        let totalY = 0;
+        for (const node of existingNodes) {
+            totalX += node.x;
+            totalY += node.y;
+        }
+
+        const centerReference = {
+            x: totalX / existingNodes.length,
+            y: totalY / existingNodes.length,
+        };
+
+        const nodesWithAngle = existingNodes.map(node => {
+            let angle = Math.atan2(node.y - centerReference.y, node.x - centerReference.x);
+            if (angle < 0) angle += Math.PI * 2;
+            return { id: node.id, angle };
+        });
+
+        nodesWithAngle.sort((a, b) => a.angle - b.angle);
+        const sortedNodeIds = nodesWithAngle.map(n => n.id);
+
+        console.log(`[GraphGen] chainNodes: Sorted node IDs based on angle: ${sortedNodeIds.length}`);
+
+        // Connect nodes in a chain based on the sorted order
+        for (let i = 0; i < sortedNodeIds.length; i++) {
+            const currentNodeId = sortedNodeIds[i];
+            const nextNodeId = sortedNodeIds[(i + 1) % sortedNodeIds.length]; // wrap around to the first node
+
+            const forwardId = `${currentNodeId}-${nextNodeId}`;
+            const reverseId = `${nextNodeId}-${currentNodeId}`;
+            const existingEdge = graph.edges.get(forwardId) ?? graph.edges.get(reverseId);
+            if (existingEdge) {
+                graph.edges.delete(existingEdge.id);
+            }
+
+            const nodeA = graph.nodes.get(currentNodeId);
+            const nodeB = graph.nodes.get(nextNodeId);
+            const generation = Math.max(nodeA?.meta.generation ?? 0, nodeB?.meta.generation ?? 0);
+
+            graph.addEdge({
+                id: forwardId,
+                a: currentNodeId,
+                b: nextNodeId,
+                meta: {
+                    roles: edgeRoles,
+                    generation,
+                    siblingCount: sortedNodeIds.length,
+                    siblingIndex: i,
+                }
+            });
+        }
+
     }
 
     static mergeNodes(graph: Graph, nodeIds: string[]): void {
@@ -511,15 +582,11 @@ export class GraphGenerator {
 
         if (!edge || !node) return;
 
-        console.log(`[GraphGen] derivedEdge: Inserting ${nodeToInsertId} into edge ${edgeId} (${edge.a} -> ${edge.b}) at (${targetX.toFixed(2)}, ${targetY.toFixed(2)})`);
+        // console.log(`[GraphGen] derivedEdge: Inserting ${nodeToInsertId} into edge ${edgeId} (${edge.a} -> ${edge.b}) at (${targetX.toFixed(2)}, ${targetY.toFixed(2)})`);
 
         // Snap node to the line segment
         node.x = targetX;
         node.y = targetY;
-
-        if (!node.meta.roles.functionalRoles.includes('merged')) {
-            node.meta.roles.functionalRoles.push('merged');
-        }
 
         const aId = edge.a;
         const bId = edge.b;
@@ -535,7 +602,7 @@ export class GraphGenerator {
         const newEdge1Id = `${aId}-${nodeToInsertId}`;
         const newEdge2Id = `${nodeToInsertId}-${bId}`;
 
-        console.log(`[GraphGen]   Creating edges: ${newEdge1Id} and ${newEdge2Id}`);
+        // console.log(`[GraphGen]   Creating edges: ${newEdge1Id} and ${newEdge2Id}`);
 
         graph.addEdge({
             id: newEdge1Id,
@@ -552,7 +619,7 @@ export class GraphGenerator {
         });
 
         // Delete the original edge
-        console.log(`[GraphGen]   Deleting original edge ${edgeId}`);
+        // console.log(`[GraphGen]   Deleting original edge ${edgeId}`);
         graph.edges.delete(edgeId);
     }
 
@@ -562,7 +629,7 @@ export class GraphGenerator {
 
         if (!edge || !node) return;
 
-        console.log(`[GraphGen] Inserting node ${nodeId} into edge ${edgeId} at (${targetX.toFixed(2)}, ${targetY.toFixed(2)})`);
+        // console.log(`[GraphGen] Inserting node ${nodeId} into edge ${edgeId} at (${targetX.toFixed(2)}, ${targetY.toFixed(2)})`);
 
         // Position the node on the edge
         node.x = targetX;
@@ -592,7 +659,7 @@ export class GraphGenerator {
         const newEdge1Id = `${aId}-${nodeId}`;
         const newEdge2Id = `${nodeId}-${bId}`;
 
-        console.log(`[GraphGen]   Creating edges: ${newEdge1Id} and ${newEdge2Id}`);
+        // console.log(`[GraphGen]   Creating edges: ${newEdge1Id} and ${newEdge2Id}`);
 
         graph.addEdge({
             id: newEdge1Id,
@@ -619,7 +686,7 @@ export class GraphGenerator {
         });
 
         // Delete the original edge
-        console.log(`[GraphGen]   Deleting original edge ${edgeId}`);
+        // console.log(`[GraphGen]   Deleting original edge ${edgeId}`);
         graph.edges.delete(edgeId);
     }
 
@@ -635,7 +702,7 @@ export class GraphGenerator {
 
         // Create intermediate node ID
         const intermediateNodeId = `S-${edgeId}-${Math.random().toString(36).substring(2, 9)}`;
-        console.log(`[GraphGen] Splitting edge ${edgeId} at (${targetX.toFixed(2)}, ${targetY.toFixed(2)}) with node ${intermediateNodeId}`);
+        // console.log(`[GraphGen] Splitting edge ${edgeId} at (${targetX.toFixed(2)}, ${targetY.toFixed(2)}) with node ${intermediateNodeId}`);
 
         // Calculate angle based on endpoints
         const angle = (nodeA.angle + nodeB.angle) / 2;
@@ -682,7 +749,7 @@ export class GraphGenerator {
         // Normalize edge IDs so the same intersection always gets the same node ID
         const sortedEdgeIds = [edgeAId, edgeBId].sort();
         const intersectionNodeId = `I-${sortedEdgeIds[0]}-${sortedEdgeIds[1]}`;
-        console.log(`[GraphGen] Creating intersection node ${intersectionNodeId} at (${x.toFixed(2)}, ${y.toFixed(2)}) for edges ${edgeAId} x ${edgeBId}`);
+        // console.log(`[GraphGen] Creating intersection node ${intersectionNodeId} at (${x.toFixed(2)}, ${y.toFixed(2)}) for edges ${edgeAId} x ${edgeBId}`);
 
         const node = graph.addNode({
             id: intersectionNodeId,
@@ -716,12 +783,12 @@ export class GraphGenerator {
             if (twinIntersection && !node.twinId) {
                 node.twinId = twinIntersection.id;
                 twinIntersection.twinId = node.id;
-                console.log(`[GraphGen] Linked intersection nodes as twins: ${intersectionNodeId} <-> ${twinIntersection.id}`);
+                // console.log(`[GraphGen] Linked intersection nodes as twins: ${intersectionNodeId} <-> ${twinIntersection.id}`);
             }
         }
 
         // Split edge A
-        console.log(`[GraphGen] Splitting edge ${edgeAId}`);
+        // console.log(`[GraphGen] Splitting edge ${edgeAId}`);
         this.derivedEdge(graph, edgeAId, intersectionNodeId, x, y);
         // Split edge B
         console.log(`[GraphGen] Splitting edge ${edgeBId}`);
@@ -794,6 +861,14 @@ export class GraphGenerator {
             const newY = (node.y + neighborNode.y) / 2;
             const newAngle = neighborNode.angle; // or some other logic to determine angle
 
+            //node roles for hole nodes
+            const nodeRoles: NodeRoles = {
+                orientation: 'not-center',
+                ordinality: 'middle',
+                functionalRoles: ['hole-joint', 'split'],
+                modRoles: []
+            };
+
             graph.addNode({
                 id: newNodeId,
                 x: newX,
@@ -802,12 +877,9 @@ export class GraphGenerator {
                 parentId: node.parentId,
                 meta: {
                     generation: node.meta.generation + 1,
-                    roles: {
-                        orientation: 'not-center',
-                        ordinality: 'middle',
-                        functionalRoles: ['merged', 'hole-joint'],
-                        modRoles: []
-                    }
+                    roles: nodeRoles,
+                    siblingCount: neighbors.length,
+                    siblingIndex: i
                 }
             });
 
@@ -815,7 +887,7 @@ export class GraphGenerator {
             const edgeRoles: EdgeRoles = {
                 orientation: 'not-center',
                 ordinality: 'middle',
-                functionalRoles: ['merged', 'hole-seg'],
+                functionalRoles: ['hole-seg', 'split'],
                 modRoles: []
             };
 
@@ -835,22 +907,12 @@ export class GraphGenerator {
             // Connect new nodes in a ring
             if (i > 0) {
                 const prevNewNodeId = newNodeIds[i - 1];
-                this.connectNeighbor(graph, prevNewNodeId, newNodeId, {
-                    orientation: 'not-center',
-                    ordinality: 'middle',
-                    functionalRoles: ['hole-seg'],
-                    modRoles: []
-                });
+                this.connectNeighbor(graph, prevNewNodeId, newNodeId, edgeRoles);
             }
             // Connect the last new node to the first new node to complete the ring
             if (i === neighbors.length - 1 && newNodeIds.length > 1) {
                 const firstNewNodeId = newNodeIds[0];
-                this.connectNeighbor(graph, newNodeId, firstNewNodeId, {
-                    orientation: 'not-center',
-                    ordinality: 'middle',
-                    functionalRoles: ['hole-seg'],
-                    modRoles: []
-                });
+                this.connectNeighbor(graph, newNodeId, firstNewNodeId, edgeRoles);
             }
             // delete the original node and its edges
             graph.nodes.delete(nodeId);

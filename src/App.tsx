@@ -13,7 +13,7 @@ export type LayoutMode = 'force' | 'circle' | 'grid' | 'breadthfirst' | 'concent
 
 function App() {
     const [graph, setGraph] = useState<Graph>(() => new Graph());
-    const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
+    const [layoutMode, setLayoutMode] = useState<LayoutMode>("smatter");
     const [positionedGraph, setPositionedGraph] = useState<Graph>(() => new Graph());
     const [_snapshotBefore, setSnapshotBefore] = useState<GraphSnapshot | null>(null);
     const [_snapshotAfter, setSnapshotAfter] = useState<GraphSnapshot | null>(null);
@@ -62,7 +62,7 @@ function App() {
 
 
     const runAnalysisPass = () => {
-        const result = Pipeline.runFullAnalysis(graph, 734);
+        const result = Pipeline.runFullAnalysis(graph, 734, { mode: "forces", toolkit: { increment: 0.08, minDistForce: { enabled: true, minDist: 9, weight: 1 } } });
         setSnapshotBefore(result.snapshots[0]);
         setSnapshotAfter(result.snapshots[2]);
         setGraph(result.graph);
@@ -153,26 +153,102 @@ function App() {
     };
 
     const exportSvg = () => {
-        const svgMarkup = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
-                <rect width="100%" height="100%" fill="#0b0b0b" />
-                ${Array.from(positionedGraph.edges.values()).map((edge) => {
-            const source = positionedGraph.nodes.get(edge.a);
-            const target = positionedGraph.nodes.get(edge.b);
+        const width = 734;
+        const height = 734;
+        const scale = 0.03;
+        const pixels = 1;
+        const graphToExport = displayGraph.nodes.size > 0 ? displayGraph : positionedGraph;
+
+        const nodeCSSclasses = (node: any): string => {
+            const classes = ['node'];
+            const roles = node.meta?.roles;
+            if (roles && typeof roles === 'object') {
+                Object.values(roles).forEach((val) => {
+                    if (Array.isArray(val)) {
+                        val.forEach((role: string) => classes.push(role));
+                    } else if (typeof val === 'string') {
+                        classes.push(val);
+                    }
+                });
+            }
+            return classes.join(' ');
+        };
+
+        const edgeCSSclasses = (edge: any): string => {
+            const classes = ['edge', 'dotted'];
+            const roles = edge.meta?.roles;
+            if (roles && typeof roles === 'object') {
+                Object.values(roles).forEach((val) => {
+                    if (Array.isArray(val)) {
+                        val.forEach((role: string) => classes.push(role));
+                    } else if (typeof val === 'string') {
+                        classes.push(val);
+                    }
+                });
+            } else if (typeof roles === 'string') {
+                classes.push(roles);
+            }
+            return classes.join(' ');
+        };
+
+        const escapeXml = (value: string): string =>
+            value
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+
+        const getSvgStylesText = (): string => {
+            for (const sheet of Array.from(document.styleSheets)) {
+                try {
+                    const owner = sheet.ownerNode as HTMLElement | null;
+                    const ownerId = owner?.getAttribute('data-vite-dev-id') ?? '';
+                    const href = (sheet as CSSStyleSheet).href ?? '';
+                    const looksLikeSvgStyles = ownerId.includes('SvgStyles.css') || href.includes('SvgStyles.css');
+                    if (!looksLikeSvgStyles) continue;
+
+                    const rules = (sheet as CSSStyleSheet).cssRules;
+                    let cssText = '';
+                    for (const rule of Array.from(rules)) {
+                        cssText += `${rule.cssText}\n`;
+                    }
+                    return cssText;
+                } catch {
+                    // Ignore stylesheets that cannot be read.
+                }
+            }
+            return '';
+        };
+
+        const svgStyles = getSvgStylesText();
+
+        const edgeMarkup = Array.from(graphToExport.edges.values()).map((edge) => {
+            const source = graphToExport.nodes.get(edge.a);
+            const target = graphToExport.nodes.get(edge.b);
             if (!source || !target) {
                 return '';
             }
+            return `<line x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" class="${escapeXml(edgeCSSclasses(edge))}" />`;
+        }).join('');
 
-            return `<line x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" stroke="#7b7b7b" stroke-width="2" />`;
-        }).join('')}
-                ${Array.from(positionedGraph.nodes.values()).map((node) => `
-                    <g>
-                        <circle cx="${node.x}" cy="${node.y}" r="10" fill="#f0b429" stroke="#fff1c2" stroke-width="1" />
-                        <text x="${node.x}" y="${node.y + 4}" text-anchor="middle" font-size="12" fill="#f4f4f4">${node.id}</text>
-                    </g>
-                `).join('')}
-            </svg>
-        `;
+        const nodeMarkup = Array.from(graphToExport.nodes.values()).map((node) => {
+            const s = width * scale / ((node.meta.generation + 1) * pixels);
+            const nodeClass = escapeXml(nodeCSSclasses(node));
+            const rotation = ((node.angle * 180) / Math.PI) - 90;
+            const points = `${-s},${-s} ${s * 1.6},0 ${-s},${s}`;
+            return `<g transform="translate(${node.x}, ${node.y}) rotate(${rotation})"><polygon points="${points}" class="${nodeClass}" /></g>`;
+        }).join('');
+
+        const svgMarkup = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+<style><![CDATA[
+${svgStyles}
+]]></style>
+<rect x="0" y="0" width="${width}" height="${height}" fill="#0b0b0b" />
+${edgeMarkup}
+${nodeMarkup}
+</svg>`;
 
         const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(blob);

@@ -8,7 +8,7 @@ interface SvgRendererProps {
 
 const width = 734;
 const height = 734;
-const scale = .03; // 
+const scale = .001; // 
 const pixels = 1; // Base size for nodes, scaled by generation
 
 
@@ -84,7 +84,7 @@ export function SvgRenderer({ graph }: SvgRendererProps) {
                 })}
                 {Array.from(graph.nodes.values()).map((node) => {
                     const s = width * scale / ((node.meta.generation + 1) * pixels); // Size based on generation
-                    return <Dot key={node.id} id={node.id} x={node.x} y={node.y} angle={node.angle} size={s} className={nodeCSSclasses(node)} />;
+                    return <Triangle key={node.id} id={node.id} x={node.x} y={node.y} angle={node.angle} size={s} className={nodeCSSclasses(node)} />;
                 })}
             </svg>
         </div>

@@ -32,7 +32,7 @@ export function runSmatter(graphologyGraph: Graphology, width: number, height: n
             const localAngle = (graphologyGraph.getNodeAttribute(nodeId, 'angle') as number) ?? 0;
 
             // The total angle branching out is the parent's angle + this child's local angle offset
-            totalAngle = accumulatedAngle + localAngle;
+            totalAngle = accumulatedAngle + localAngle; // Add Pi to flip the direction so that 0 is at the top (12 o'clock) instead of the right (3 o'clock)
 
             // Save it back to the node in case we want it for drawing/reference later
             graphologyGraph.setNodeAttribute(nodeId, 'angle', totalAngle);

@@ -5,12 +5,21 @@ import { GraphGenerator, type EdgeRoles } from '../graph/GraphGenerator';
 import { GraphLayoutEngine } from '../layout/GraphLayoutEngine';
 import { captureSnapshot } from '../graph/GraphSnapshot';
 import type { GraphSnapshot } from '../graph/GraphSnapshot';
-import { Relaxer, SpringSettings } from '../layout/Relaxer';
+import { Relaxer, SpringSettings, type ForceToolkitSettings } from '../layout/Relaxer';
 
 export interface AnalysisResult {
     graph: Graph;
     /** Node positions captured immediately before any mutations. */
     snapshots: GraphSnapshot[]; // [snapshot0, snapshot1, 2,3,4,etc]
+}
+
+export type RelaxMode = 'classic' | 'forces';
+
+export interface RelaxConfig {
+    mode?: RelaxMode;
+    springs?: SpringSettings;
+    toolkit?: ForceToolkitSettings;
+    useBorder?: boolean;
 }
 
 export class Pipeline {
@@ -20,12 +29,65 @@ export class Pipeline {
         return graph;
     }
 
+    /** Runs a full analysis pass on the graph, returning the final graph and snapshots of node positions before and after mutations. */
+
+    static runFullAnalysis(graph: Graph, width: number, relaxConfig: RelaxConfig = {}): AnalysisResult {
+        const currentGraph = graph.clone();
+        const snapshot0 = captureSnapshot(currentGraph);
+        const snapshots: GraphSnapshot[] = [snapshot0];
+        const maxIterations = 50;
+        Analyser.findTwins(currentGraph, width); // mark twins before running further operations, so that all future transformations remain symmetrical
+
+        for (let i = 0; i < maxIterations; i++) {
+            console.log(`Iteration ${i}`);
+            if (Pipeline.runChainClusters(currentGraph, width)) continue;
+            if (Pipeline.runLineLineIntersections(currentGraph, width)) continue; // if we made any intersections, we need to re-run merges and intersections
+            if (Pipeline.runNodeLineIntersections(currentGraph, width)) continue; // snap nodes to edges
+            if (Pipeline.runCloseConnections(currentGraph, width)) continue;
+            // Geometry is stable — wire border connections
+            if (Pipeline.runBorderConnections(currentGraph, width)) {
+                Pipeline.runRelax(currentGraph, 3, relaxConfig.springs ?? { targetLength: 0, grow: 0.9 }, relaxConfig);
+                continue;
+            }
+            // Nothing left to do
+            break;
+        }
+
+        snapshots.push(captureSnapshot(currentGraph));
+        snapshots.push(captureSnapshot(currentGraph));
+
+        return { graph: currentGraph, snapshots: snapshots };
+    }
+
+    // now look at average edge length. compare it to each non-border edge, and if any edge is longer than 1.3x the average, 
+    // assign it a likelyhood of being a split candidate. If it is > 1.35 the average, weight 1 (100% chance), if its 1.1 the average wight 0.1 (10% chance).
+    // scale the weight by the ratio of the edge length to the average edge length. Then, for each edge that is a candidate, split it at its midpoint and create a new node there.
+    // if its x is width/2 (vertical center), then its chance is 0.
+    // Pipeline.splitLongEdges(currentGraph, width);
+
+
+    /** Runs once to chain node clusters. if cluster < 3 nodes, it will merge instead. */
+    private static runChainClusters(graph: Graph, width: number): boolean {
+        let anyChained = false;
+        const ops = Analyser.findNodeClusters(graph, width);
+        if (ops.length === 0) return false;
+
+        const modified = new Set<string>();
+        for (const op of ops) {
+            if (op.nodes.some(n => modified.has(n))) continue;
+            GraphGenerator.chainNodes(graph, op.nodes, { orientation: 'not-center', ordinality: 'middle', functionalRoles: ['loop-seg'], modRoles: [] });
+            op.nodes.forEach(n => modified.add(n));
+            anyChained = true;
+        }
+        return anyChained;
+    }
+
     /** Repeatedly merges close/coincident nodes until the graph is fully stable. */
     private static runMerges(graph: Graph, width: number): boolean {
         let anyMerged = false;
         let found = true;
         while (found) {
-            const ops = Analyser.findMergeableNodes(graph, width);
+            const ops = Analyser.findNodeClusters(graph, width);
             if (ops.length === 0) { found = false; break; }
             const modified = new Set<string>();
             for (const op of ops) {
@@ -39,17 +101,17 @@ export class Pipeline {
     }
 
     /** One pass of node-line intersections: finds nodes close to edges and snaps them onto the edge. */
-    private static runNodeLineIntersections(graph: Graph, width: number): boolean {
-        const ops = Analyser.findNodeLineIntersections(graph);
+    private static runNodeLineIntersections(graph: Graph, _width: number): boolean {
+        const ops = Analyser.findNodeLineIntersections(graph, _width);
         if (ops.length === 0) return false;
 
-        console.log(`[NodeLineIntersections] Found ${ops.length} node-line intersections`);
-        ops.forEach((op, i) => {
-            console.log(`  Op ${i}: node ${op.nodeId} -> edge ${op.edgeId} at (${op.targetX.toFixed(2)}, ${op.targetY.toFixed(2)})`);
-        });
+        // console.log(`[NodeLineIntersections] Found ${ops.length} node-line intersections`);
+        // ops.forEach((op, i) => {
+        //     // console.log(`  Op ${i}: node ${op.nodeId} -> edge ${op.edgeId} at (${op.targetX.toFixed(2)}, ${op.targetY.toFixed(2)})`);
+        // });
 
         for (const op of ops) {
-            console.log(`[NodeLineIntersections] Processing node ${op.nodeId} on edge ${op.edgeId}`);
+            // console.log(`[NodeLineIntersections] Processing node ${op.nodeId} on edge ${op.edgeId}`);
             GraphGenerator.insertNodeIntoEdge(graph, op.nodeId, op.edgeId, op.targetX, op.targetY);
         }
         return true;
@@ -60,9 +122,9 @@ export class Pipeline {
         const ops = Analyser.findEdgeIntersections(graph, width, useToBorder, skipIntersectionEdges);
         if (ops.length === 0) return false;
 
-        ops.forEach((op, i) => {
-            console.log(`  Op ${i}: edges ${op.edgeA} x ${op.edgeB} at (${op.targetX.toFixed(2)}, ${op.targetY.toFixed(2)})`);
-        });
+        // ops.forEach((op, i) => {
+        //     // console.log(`  Op ${i}: edges ${op.edgeA} x ${op.edgeB} at (${op.targetX.toFixed(2)}, ${op.targetY.toFixed(2)})`);
+        // });
 
         // Deduplicate operations
         const seen = new Set<string>();
@@ -205,7 +267,7 @@ export class Pipeline {
             if (segments.length > 0) {
                 segments.push(currentEdgeId);
                 edgeSegments.set(originalEdgeId, segments);
-                console.log(`[Pipeline] Pre-split edge ${originalEdgeId} into ${segments.length} segments`);
+                // console.log(`[Pipeline] Pre-split edge ${originalEdgeId} into ${segments.length} segments`);
             }
         }
 
@@ -280,7 +342,7 @@ export class Pipeline {
                     twinIntersection.twinId = intersectionNodeId;
                 }
 
-                console.log(`[Intersections] Linked intersection node ${intersectionNodeId} for edges ${resolvedEdgeA} x ${resolvedEdgeB}`);
+                // console.log(`[Intersections] Linked intersection node ${intersectionNodeId} for edges ${resolvedEdgeA} x ${resolvedEdgeB}`);
             }
         }
 
@@ -313,7 +375,7 @@ export class Pipeline {
                 twin.twinId = node.id;
                 linked.add(node.id);
                 linked.add(twin.id);
-                console.log(`[Pipeline] Linked split node twins: ${node.id} <-> ${twin.id}`);
+                // console.log(`[Pipeline] Linked split node twins: ${node.id} <-> ${twin.id}`);
             }
         }
     }
@@ -342,13 +404,13 @@ export class Pipeline {
                 twin.twinId = node.id;
                 linked.add(node.id);
                 linked.add(twin.id);
-                console.log(`[Pipeline] Linked intersection twins: ${node.id} <-> ${twin.id}`);
+                // console.log(`[Pipeline] Linked intersection twins: ${node.id} <-> ${twin.id}`);
             }
         }
     }
 
     /** Helper: find which segment a point (at parameter t) falls within */
-    private static findSegmentAtT(graph: Graph, segments: string[], t: number): string {
+    private static findSegmentAtT(graph: Graph, segments: string[], _t: number): string {
         // t ranges from 0 to 1 across the original edge
         // segments were created in order, so we interpolate which one to use
         // Simplified: if we have N intersections creating N+1 segments,
@@ -385,14 +447,14 @@ export class Pipeline {
                     if (targetNode && !targetNode.meta.roles.functionalRoles.some(r => r.includes('border')) &&
                         !targetNode.meta.roles.functionalRoles.includes('terminal')) {
                         edgesToRemove.push(edge.id);
-                        console.log(`[BorderConn] Removing old connection from ${jointId} to ${edge.b}`);
+                        // console.log(`[BorderConn] Removing old connection from ${jointId} to ${edge.b}`);
                     }
                 } else if (edge.b === jointId && !targetIds.includes(edge.a)) {
                     const targetNode = graph.nodes.get(edge.a);
                     if (targetNode && !targetNode.meta.roles.functionalRoles.some(r => r.includes('border')) &&
                         !targetNode.meta.roles.functionalRoles.includes('terminal')) {
                         edgesToRemove.push(edge.id);
-                        console.log(`[BorderConn] Removing old connection from ${jointId} to ${edge.a}`);
+                        // console.log(`[BorderConn] Removing old connection from ${jointId} to ${edge.a}`);
                     }
                 }
             }
@@ -402,8 +464,6 @@ export class Pipeline {
         }
 
         for (const op of ops) {
-            const sourceNode = graph.nodes.get(op.sourceId);
-            const generation = sourceNode?.meta.generation ?? 0;
             const roles: EdgeRoles = {
                 orientation: 'not-center',
                 ordinality: 'middle',
@@ -412,59 +472,27 @@ export class Pipeline {
             };
             GraphGenerator.connectNeighbor(graph, op.sourceId, op.targetId, roles);
         }
+        if (ops.length > 0) return true;
+        return false;
+    }
+
+    private static runCloseConnections(graph: Graph, width: number): boolean {
+        const ops = Analyser.findConnectableNeighbors(graph, width);
+        if (ops.length === 0) return false;
+
+        for (const op of ops) {
+            const roles: EdgeRoles = {
+                orientation: 'not-center',
+                ordinality: 'middle',
+                functionalRoles: [`genN-seg`],
+                modRoles: []
+            };
+            GraphGenerator.connectNeighbor(graph, op.sourceId, op.targetId, roles);
+        }
         return true;
     }
 
-    /** Run a single relax pass, check for new intersections, and resolve them. */
-    static runRelaxPassWithIntersectionCheck(graph: Graph, width: number): void {
-        const maxIterations = 10;
-        const useToBorder = true;
-        for (let i = 0; i < maxIterations; i++) {
-            Pipeline.runRelax(graph, 30);
-            if (Pipeline.runLineLineIntersections(graph, width, useToBorder)) {
-                // if we made any intersections, merge and relax again
-                Pipeline.runMerges(graph, width);
-                continue;
-            }
-            break; // no new intersections found, exit loop
-        }
-    }
-
-    /** Run relaxation to adjust node positions using spring forces. */
-    static runRelax(graph: Graph, iterations: number = 10, springs: SpringSettings = { targetLength: 0, grow: 0.9 }): void {
-        Relaxer.relax(graph, iterations, springs);
-    }
-
-    /** Runs a full analysis pass on the graph, returning the final graph and snapshots of node positions before and after mutations. */
-
-    static runFullAnalysis(graph: Graph, width: number): AnalysisResult {
-        const currentGraph = graph.clone();
-        const snapshot0 = captureSnapshot(currentGraph);
-        const snapshots: GraphSnapshot[] = [snapshot0];
-        const maxIterations = 100;
-        Analyser.findTwins(currentGraph, width); // mark twins before running further operations, so that all future transformations remain symmetrical
-
-        for (let i = 0; i < maxIterations; i++) {
-            console.log(`Iteration ${i}`);
-            if (Pipeline.runLineLineIntersections(currentGraph, width)) continue; // if we made any intersections, we need to re-run merges and intersections
-            if (Pipeline.runNodeLineIntersections(currentGraph, width)) continue; // snap nodes to edges
-            if (Pipeline.runMerges(currentGraph, width)) continue; // later make dynamic based on count of mergeRuns
-
-            // Geometry is stable — wire border connections
-            if (Pipeline.runBorderConnections(currentGraph, width)) {
-                Pipeline.runRelax(currentGraph, 3);
-                continue;
-            }
-            // Nothing left to do
-            break;
-        }
-
-        snapshots.push(captureSnapshot(currentGraph));
-
-        // now look at average edge length. compare it to each non-border edge, and if any edge is longer than 1.3x the average, 
-        // assign it a likelyhood of being a split candidate. If it is > 1.35 the average, weight 1 (100% chance), if its 1.1 the average wight 0.1 (10% chance).
-        // scale the weight by the ratio of the edge length to the average edge length. Then, for each edge that is a candidate, split it at its midpoint and create a new node there.
-        // if its x is width/2 (vertical center), then its chance is 0.
+    private static splitLongEdges(currentGraph: Graph, width: number): void {
 
         const edgesToSplit: { edgeId: string; targetX: number; targetY: number }[] = [];
         const ratio: number = 1; // edges longer than this ratio of the average will be split
@@ -516,7 +544,7 @@ export class Pipeline {
             const dy = nodeA.y - nodeB.y;
             const length = Math.sqrt(dx * dx + dy * dy);
             const splitChance = parseFloat((length / Relaxer.calculateAverageEdgeLength(currentGraph) * Math.random() * 3).toFixed(2));
-            console.log(`Edge ${e.id} length: ${length.toFixed(2)}, splitChance: ${splitChance.toFixed(2)}, ratio: ${ratio}`);
+            // console.log(`Edge ${e.id} length: ${length.toFixed(2)}, splitChance: ${splitChance.toFixed(2)}, ratio: ${ratio}`);
             if (splitChance > ratio) {
                 // Use precomputed twin edge (already checked both directions)
                 edgesToSplit.push({
@@ -524,7 +552,7 @@ export class Pipeline {
                     targetX: (currentGraph.nodes.get(precomputedTwinEdge.a)!.x + currentGraph.nodes.get(precomputedTwinEdge.b)!.x) / 2,
                     targetY: (currentGraph.nodes.get(precomputedTwinEdge.a)!.y + currentGraph.nodes.get(precomputedTwinEdge.b)!.y) / 2
                 });
-                console.log(`Edge ${e.id} has twin edge ${precomputedTwinEdge.id}, will split both.`);
+                // console.log(`Edge ${e.id} has twin edge ${precomputedTwinEdge.id}, will split both.`);
                 edgesToSplit.push({
                     edgeId: e.id,
                     targetX: (nodeA.x + nodeB.x) / 2,
@@ -532,14 +560,51 @@ export class Pipeline {
                 });
             }
         }
-        snapshots.push(captureSnapshot(currentGraph));
-
         for (const split of edgesToSplit) {
             GraphGenerator.splitEdge(currentGraph, split.edgeId, split.targetX, split.targetY)
         }
-
-        snapshots.push(captureSnapshot(currentGraph));
-
-        return { graph: currentGraph, snapshots: snapshots };
     }
+
+    /** Run a single relax pass, check for new intersections, and resolve them. 
+     * This is what only the button triggers, nothing else.
+    */
+    static runRelaxPassWithIntersectionCheck(graph: Graph, width: number, relaxConfig: RelaxConfig = {}): void {
+        const maxIterations = 10;
+        const useToBorder = true;
+        for (let i = 0; i < maxIterations; i++) {
+            console.log('Iteration', i, 'of relax pass with intersection check');
+            Pipeline.runRelax(graph, 10, relaxConfig.springs ?? { targetLength: 0, grow: 0.9 }, relaxConfig);
+            if (Pipeline.runLineLineIntersections(graph, width, useToBorder)) {
+                // if we made any intersections, merge and relax again
+                if (Pipeline.runMerges(graph, width)) { Pipeline.runLineLineIntersections(graph, width, useToBorder); }
+                continue;
+            }
+            break; // no new intersections found, exit loop
+        }
+    }
+
+    /** Run relaxation to adjust node positions using spring forces. */
+    static runRelax(
+        graph: Graph,
+        iterations: number = 10,
+        springs: SpringSettings = { targetLength: 0, grow: 0.9 },
+        relaxConfig: RelaxConfig = {}
+    ): void {
+        const mode = relaxConfig.mode ?? 'forces';
+        const useBorder = relaxConfig.useBorder ?? true;
+
+        if (mode === 'forces') {
+            Relaxer.relaxWithForces(
+                graph,
+                iterations,
+                springs,
+                relaxConfig.toolkit ?? {},
+                useBorder
+            );
+            return;
+        }
+
+        Relaxer.relaxWithForces(graph, iterations, springs, {}, useBorder);
+    }
+
 } 
