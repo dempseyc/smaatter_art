@@ -92,8 +92,18 @@
     stroke-width: 1px;
 }
 
-/* 
+
 .edge {
     stroke: black;
     stroke-width: 2px;
-} */
+}
+
+.border-joint,
+.border,
+.terminal,
+.to-border,
+.centered {
+    stroke: black;
+    fill: black;
+    stroke-width: 0px;
+}

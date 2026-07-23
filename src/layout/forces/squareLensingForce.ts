@@ -4,7 +4,7 @@ export const squareLensingForceProvider: ForceProvider = {
     key: 'squareLensingForce',
     isEnabled: (context: ForceRuntimeContext) => Boolean(context.forceSettings.squareLensingForce?.enabled),
     getTargets: (context: ForceRuntimeContext): ForceTarget[] => {
-        const { graph, anchorIds, forceSettings } = context;
+        const { graph, anchorIds, lockedNodeIds, forceSettings } = context;
         const settings = forceSettings.squareLensingForce ?? {};
         const roundness = Math.max(0, settings.roundness ?? 0);
         const weight = settings.weight ?? 1;
@@ -18,6 +18,7 @@ export const squareLensingForceProvider: ForceProvider = {
         if (roundness <= 0 || weight <= 0) return [];
 
         const candidates = Array.from(graph.nodes.values()).filter(node => {
+            if (lockedNodeIds.has(node.id)) return false;
             if (!includeAnchors && anchorIds.has(node.id)) return false;
             const roles = node.meta.roles.functionalRoles;
             const isBorder = roles.some(r => r === 'border' || r === 'border-joint');

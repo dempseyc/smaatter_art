@@ -219,8 +219,7 @@ export class Analyser {
         };
 
         for (const node of nodes) {
-            // Skip nodes that are already intersection nodes or part of edges
-            if (node.id.startsWith('I-')) continue;
+            // removed intersection node guard here.
 
             for (const edge of edges) {
                 // Don't snap a node to an edge it's already connected to
@@ -254,7 +253,7 @@ export class Analyser {
      * Recommends creating an intersection node.
      * @param skipIntersectionEdges - If true, skip edges that connect to intersection nodes (prevents cascading). Set to false at end of analysis to catch final intersections.
      */
-    static findEdgeIntersections(graph: Graph, layoutWidth: number, useToBorder: boolean = true, skipIntersectionEdges: boolean = true): IntersectionOperation[] {
+    static findEdgeIntersections(graph: Graph, layoutWidth: number, useToBorder: boolean = true, skipIntersectionEdges: boolean = false): IntersectionOperation[] {
 
         const ops: IntersectionOperation[] = [];
         // Exclude border-chain edges AND optionally edges that connect to or from intersection nodes

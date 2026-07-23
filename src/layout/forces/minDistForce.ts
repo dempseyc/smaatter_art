@@ -4,7 +4,7 @@ export const minDistForceProvider: ForceProvider = {
     key: 'minDistForce',
     isEnabled: (context: ForceRuntimeContext) => Boolean(context.forceSettings.minDistForce?.enabled),
     getTargets: (context: ForceRuntimeContext): ForceTarget[] => {
-        const { graph, anchorIds, forceSettings } = context;
+        const { graph, anchorIds, lockedNodeIds, forceSettings } = context;
         const settings = forceSettings.minDistForce ?? {};
         const minDist = settings.minDist ?? 24;
         const minDistWeight = settings.weight ?? 1;
@@ -14,6 +14,7 @@ export const minDistForceProvider: ForceProvider = {
         const targets: ForceTarget[] = [];
         const candidates = Array.from(graph.nodes.values()).filter(node => {
             if (anchorIds.has(node.id)) return false;
+            if (lockedNodeIds.has(node.id)) return false;
             const roles = node.meta.roles.functionalRoles;
             const isBorder = roles.some(r => r === 'border' || r === 'border-joint');
             const isTerminal = roles.some(r => r === 'terminal');

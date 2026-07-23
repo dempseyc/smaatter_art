@@ -62,26 +62,39 @@ function App() {
 
 
     const runAnalysisPass = () => {
-        const result = Pipeline.runFullAnalysis(graph, 734, { mode: "forces", toolkit: { increment: 0.08, minDistForce: { enabled: true, minDist: 9, weight: 1 } } });
-        setSnapshotBefore(result.snapshots[0]);
-        setSnapshotAfter(result.snapshots[2]);
-        setGraph(result.graph);
-        const newPositionedGraph = result.graph.clone();
+        const synthesis = Pipeline.buildAndApplySupernodes(
+            layout,
+            734,
+            7,
+            { mode: "forces", toolkit: { increment: 0.08, minDistForce: { enabled: true, minDist: 9, weight: 1 } } },
+            { preserveSymmetry: true },
+            graph
+        );
+
+        const analyzedMain = synthesis.family.skeleton;
+        const resultGraph = synthesis.graph;
+
+        setSnapshotBefore(analyzedMain.snapshots[0] ?? null);
+        setSnapshotAfter(captureSnapshot(resultGraph));
+        setGraph(resultGraph);
+        const newPositionedGraph = resultGraph.clone();
         setPositionedGraph(newPositionedGraph);
 
-        // Apply first snapshot directly, then queue remaining for animation
-        const firstSnapshot = result.snapshots[0];
+        // Show analyzed skeleton first, then supernode-inserted result.
+        const firstSnapshot = analyzedMain.snapshots[0];
         const displayClone = newPositionedGraph.clone();
-        firstSnapshot.nodes.forEach((nodeSnapshot) => {
-            const node = displayClone.nodes.get(nodeSnapshot.id);
-            if (node) {
-                node.x = nodeSnapshot.x;
-                node.y = nodeSnapshot.y;
-                node.angle = nodeSnapshot.angle;
-            }
-        });
+        if (firstSnapshot) {
+            firstSnapshot.nodes.forEach((nodeSnapshot) => {
+                const node = displayClone.nodes.get(nodeSnapshot.id);
+                if (node) {
+                    node.x = nodeSnapshot.x;
+                    node.y = nodeSnapshot.y;
+                    node.angle = nodeSnapshot.angle;
+                }
+            });
+        }
         setDisplayGraph(displayClone);
-        animator.current.queueSnapshots(result.snapshots.slice(1));
+        animator.current.queueSnapshots([...analyzedMain.snapshots.slice(1), captureSnapshot(resultGraph)]);
     };
 
     useMemo(() => {

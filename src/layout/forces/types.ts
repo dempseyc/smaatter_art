@@ -40,6 +40,7 @@ export type ForceTarget = { nodeId: NodeId; x: number; y: number; weight: number
 export interface ForceRuntimeContext {
     graph: Graph;
     anchorIds: Set<NodeId>;
+    lockedNodeIds: Set<NodeId>;
     avgLength: number;
     springSettings: SpringSettings;
     forceSettings: ForceToolkitSettings;

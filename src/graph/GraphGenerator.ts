@@ -22,13 +22,18 @@ export type EdgeRoles = {
     modRoles: ModRole[];
 }
 
+export type SupernodeReplaceOptions = {
+    flipHorizontal?: boolean;
+    terminalShift?: number;
+};
+
 export class GraphGenerator {
 
-    static generateGraph(): Graph {
+    static generateGraph(ranA: number = 7): Graph {
 
         const graph = new Graph();
-        const TOGGLE_RANDOM = false; // Set to true to randomize the numbers of nodes.
-        const ranA = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 7; // Number of gen1 nodes
+        const TOGGLE_RANDOM = true; // Set to true to randomize the numbers of nodes.
+        ranA = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : ranA; // Number of gen1 nodes
         const ranC = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 4; // Number of gen3, center parent
         const ranD = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 4; // Number of gen3, non-center parent
         const ranB = TOGGLE_RANDOM ? Math.ceil(Math.random() * 7) : 5; // Number of gen2 nodes
@@ -477,7 +482,32 @@ export class GraphGenerator {
                 }
             });
         }
+    }
 
+    static moveChainedNodesApart(graph: Graph, nodeIds: string[], distance: number): void {
+        if (nodeIds.length < 2) return;
+
+        const existingNodes = nodeIds
+            .map(id => graph.nodes.get(id))
+            .filter((n): n is NonNullable<typeof n> => Boolean(n));
+
+        if (existingNodes.length < 2) return;
+        const centerReference = {
+            x: existingNodes.reduce((sum, node) => sum + node.x, 0) / existingNodes.length,
+            y: existingNodes.reduce((sum, node) => sum + node.y, 0) / existingNodes.length,
+        };
+
+        // move nodes outward if they are too close to the center reference point
+        existingNodes.forEach(node => {
+            const dx = node.x - centerReference.x;
+            const dy = node.y - centerReference.y;
+            const currentDistance = Math.sqrt(dx * dx + dy * dy);
+            if (currentDistance < distance) {
+                const scale = distance / currentDistance;
+                node.x = centerReference.x + dx * scale;
+                node.y = centerReference.y + dy * scale;
+            }
+        });
     }
 
     static mergeNodes(graph: Graph, nodeIds: string[]): void {
@@ -826,6 +856,281 @@ export class GraphGenerator {
                 siblingIndex: 0
             }
         });
+    }
+
+    /**
+     * Replace one node with a supernode graph.
+     * Terminal nodes in the supernode are matched to host neighbors by angle order around their centers.
+     */
+    static replaceNodeWithSupernode(
+        graph: Graph,
+        hostNodeId: string,
+        supernodeTemplate: Graph,
+        options: SupernodeReplaceOptions = {}
+    ): boolean {
+        const hostNode = graph.nodes.get(hostNodeId);
+        if (!hostNode) return false;
+
+        const flipHorizontal = options.flipHorizontal ?? false;
+        const terminalShift = options.terminalShift ?? 0;
+
+        const hostAdj = Array.from(graph.edges.values())
+            .filter(e => e.a === hostNodeId || e.b === hostNodeId)
+            .map(e => ({
+                neighborId: e.a === hostNodeId ? e.b : e.a,
+                edge: e,
+            }));
+
+        if (hostAdj.length === 0) return false;
+
+        const templateTerminals = Array.from(supernodeTemplate.nodes.values())
+            .filter(n => n.meta.roles.functionalRoles.includes('terminal'));
+
+        if (templateTerminals.length !== hostAdj.length) {
+            return false;
+        }
+
+        const templateN0 = supernodeTemplate.nodes.get('0');
+        if (!templateN0) return false;
+
+        // Sort host neighbors by angle around host node.
+        const sortedHostNeighbors = [...hostAdj].sort((a, b) => {
+            const na = graph.nodes.get(a.neighborId);
+            const nb = graph.nodes.get(b.neighborId);
+            if (!na || !nb) return 0;
+            let aa = Math.atan2(na.y - hostNode.y, na.x - hostNode.x);
+            let ab = Math.atan2(nb.y - hostNode.y, nb.x - hostNode.x);
+            if (aa < 0) aa += Math.PI * 2;
+            if (ab < 0) ab += Math.PI * 2;
+            return aa - ab;
+        });
+
+        // Sort template terminals by angle around template N0.
+        const sortedTemplateTerminals = [...templateTerminals].sort((a, b) => {
+            let aa = Math.atan2(a.y - templateN0.y, a.x - templateN0.x);
+            let ab = Math.atan2(b.y - templateN0.y, b.x - templateN0.x);
+            if (aa < 0) aa += Math.PI * 2;
+            if (ab < 0) ab += Math.PI * 2;
+            return aa - ab;
+        });
+
+        let orderedTemplateTerminals = [...sortedTemplateTerminals];
+        if (flipHorizontal) {
+            // Mirror mapping direction so terminal order on the right twin is reversed.
+            orderedTemplateTerminals = [...orderedTemplateTerminals].reverse();
+        }
+        if (orderedTemplateTerminals.length > 0 && terminalShift !== 0) {
+            // Positive shift rotates terminal mapping along host neighbors.
+            const n = orderedTemplateTerminals.length;
+            const s = ((terminalShift % n) + n) % n;
+            orderedTemplateTerminals = orderedTemplateTerminals.map((_, i) =>
+                orderedTemplateTerminals[(i - s + n) % n]
+            );
+        }
+
+        // Build affine transform from template terminal offsets -> host neighbor offsets.
+        const sourcePoints = orderedTemplateTerminals.map(t => ({
+            x: flipHorizontal ? -(t.x - templateN0.x) : (t.x - templateN0.x),
+            y: t.y - templateN0.y,
+        }));
+        const targetPoints = sortedHostNeighbors.map(h => {
+            const n = graph.nodes.get(h.neighborId)!;
+            return {
+                x: n.x - hostNode.x,
+                y: n.y - hostNode.y,
+            };
+        });
+
+        const affine = this.solveAffine2D(sourcePoints, targetPoints);
+        if (!affine) return false;
+
+        const instancePrefix = `SN-${hostNodeId}`;
+        const nodeIdMap = new Map<string, string>();
+
+        // Add supernode nodes with transformed positions.
+        for (const templateNode of supernodeTemplate.nodes.values()) {
+            const newId = `${instancePrefix}-${templateNode.id}`;
+            nodeIdMap.set(templateNode.id, newId);
+
+            const lx = flipHorizontal ? -(templateNode.x - templateN0.x) : (templateNode.x - templateN0.x);
+            const ly = templateNode.y - templateN0.y;
+            const tx = affine.a * lx + affine.b * ly + affine.c;
+            const ty = affine.d * lx + affine.e * ly + affine.f;
+
+            graph.addNode({
+                id: newId,
+                x: hostNode.x + tx,
+                y: hostNode.y + ty,
+                angle: templateNode.angle,
+                targetX: lx,
+                targetY: ly,
+                parentId: templateNode.parentId ? `${instancePrefix}-${templateNode.parentId}` : hostNode.parentId,
+                meta: {
+                    layoutLocked: true,
+                    roles: {
+                        orientation: templateNode.meta.roles.orientation,
+                        ordinality: templateNode.meta.roles.ordinality,
+                        functionalRoles: [...templateNode.meta.roles.functionalRoles],
+                        modRoles: [...templateNode.meta.roles.modRoles],
+                    },
+                    generation: templateNode.meta.generation,
+                    siblingIndex: templateNode.meta.siblingIndex,
+                    siblingCount: templateNode.meta.siblingCount,
+                }
+            });
+        }
+
+        // Ensure N0 is exactly at host location.
+        const n0NewId = nodeIdMap.get('0');
+        if (n0NewId) {
+            const n0Node = graph.nodes.get(n0NewId);
+            if (n0Node) {
+                n0Node.x = hostNode.x;
+                n0Node.y = hostNode.y;
+            }
+        }
+
+        // Add supernode internal edges.
+        for (const templateEdge of supernodeTemplate.edges.values()) {
+            const newA = nodeIdMap.get(templateEdge.a);
+            const newB = nodeIdMap.get(templateEdge.b);
+            if (!newA || !newB) continue;
+
+            const newId = `${newA}-${newB}`;
+            graph.addEdge({
+                id: newId,
+                a: newA,
+                b: newB,
+                meta: {
+                    roles: {
+                        orientation: templateEdge.meta.roles.orientation,
+                        ordinality: templateEdge.meta.roles.ordinality,
+                        functionalRoles: [...templateEdge.meta.roles.functionalRoles],
+                        modRoles: [...templateEdge.meta.roles.modRoles],
+                    },
+                    generation: templateEdge.meta.generation,
+                    siblingCount: templateEdge.meta.siblingCount,
+                    siblingIndex: templateEdge.meta.siblingIndex,
+                }
+            });
+        }
+
+        // Re-anchor terminals exactly on host-neighbor endpoints and reconnect externals.
+        for (let i = 0; i < orderedTemplateTerminals.length; i++) {
+            const templateTerminal = orderedTemplateTerminals[i];
+            const hostLink = sortedHostNeighbors[i];
+            const neighbor = graph.nodes.get(hostLink.neighborId);
+            const newTerminalId = nodeIdMap.get(templateTerminal.id);
+            const newTerminal = newTerminalId ? graph.nodes.get(newTerminalId) : undefined;
+
+            if (!neighbor || !newTerminal) continue;
+
+            newTerminal.x = neighbor.x;
+            newTerminal.y = neighbor.y;
+
+            graph.addEdge({
+                id: `${newTerminal.id}-${neighbor.id}`,
+                a: newTerminal.id,
+                b: neighbor.id,
+                meta: {
+                    roles: {
+                        orientation: hostLink.edge.meta.roles.orientation,
+                        ordinality: hostLink.edge.meta.roles.ordinality,
+                        functionalRoles: [...hostLink.edge.meta.roles.functionalRoles],
+                        modRoles: [...hostLink.edge.meta.roles.modRoles],
+                    },
+                    generation: hostLink.edge.meta.generation,
+                    siblingCount: hostLink.edge.meta.siblingCount,
+                    siblingIndex: hostLink.edge.meta.siblingIndex,
+                }
+            });
+        }
+
+        // Remove old host edges and host node.
+        for (const link of hostAdj) {
+            graph.edges.delete(link.edge.id);
+        }
+        graph.nodes.delete(hostNodeId);
+
+        return true;
+    }
+
+    private static solveAffine2D(
+        source: Array<{ x: number; y: number }>,
+        target: Array<{ x: number; y: number }>
+    ): { a: number; b: number; c: number; d: number; e: number; f: number } | null {
+        if (source.length !== target.length || source.length < 3) return null;
+
+        let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0;
+        let bxX = 0, byX = 0, b1X = 0;
+        let bxY = 0, byY = 0, b1Y = 0;
+
+        for (let i = 0; i < source.length; i++) {
+            const x = source[i].x;
+            const y = source[i].y;
+            const X = target[i].x;
+            const Y = target[i].y;
+
+            sxx += x * x;
+            sxy += x * y;
+            syy += y * y;
+            sx += x;
+            sy += y;
+
+            bxX += x * X;
+            byX += y * X;
+            b1X += X;
+
+            bxY += x * Y;
+            byY += y * Y;
+            b1Y += Y;
+        }
+
+        const n = source.length;
+        const A = [
+            [sxx, sxy, sx],
+            [sxy, syy, sy],
+            [sx, sy, n],
+        ];
+
+        const solve3x3 = (M: number[][], b: number[]): number[] | null => {
+            const m = M.map(row => [...row]);
+            const v = [...b];
+
+            for (let col = 0; col < 3; col++) {
+                let pivot = col;
+                for (let r = col + 1; r < 3; r++) {
+                    if (Math.abs(m[r][col]) > Math.abs(m[pivot][col])) pivot = r;
+                }
+                if (Math.abs(m[pivot][col]) < 1e-9) return null;
+                if (pivot !== col) {
+                    [m[col], m[pivot]] = [m[pivot], m[col]];
+                    [v[col], v[pivot]] = [v[pivot], v[col]];
+                }
+
+                const div = m[col][col];
+                for (let c = col; c < 3; c++) m[col][c] /= div;
+                v[col] /= div;
+
+                for (let r = 0; r < 3; r++) {
+                    if (r === col) continue;
+                    const factor = m[r][col];
+                    for (let c = col; c < 3; c++) m[r][c] -= factor * m[col][c];
+                    v[r] -= factor * v[col];
+                }
+            }
+
+            return v;
+        };
+
+        const xCoeffs = solve3x3(A, [bxX, byX, b1X]);
+        const yCoeffs = solve3x3(A, [bxY, byY, b1Y]);
+        if (!xCoeffs || !yCoeffs) return null;
+
+        return {
+            a: xCoeffs[0], b: xCoeffs[1], c: xCoeffs[2],
+            d: yCoeffs[0], e: yCoeffs[1], f: yCoeffs[2],
+        };
     }
 
     static createHole(graph: Graph, nodeId: string): void {

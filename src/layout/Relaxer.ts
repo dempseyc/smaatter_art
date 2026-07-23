@@ -87,6 +87,7 @@ export class Relaxer {
         };
 
         const anchorIds = this.getAnchorIds(graph, useBorder);
+        const lockedNodeIds = this.getLockedNodeIds(graph);
         const avgLength = springSettings.targetLength! > 0
             ? springSettings.targetLength!
             : this.calculateAverageEdgeLength(graph) * (springSettings.grow ?? 1);
@@ -120,6 +121,7 @@ export class Relaxer {
             const forceContext = {
                 graph,
                 anchorIds,
+                lockedNodeIds,
                 avgLength,
                 springSettings,
                 forceSettings,
@@ -150,6 +152,7 @@ export class Relaxer {
                 forceSettings.squareLensingForce?.enabled && forceSettings.squareLensingForce?.includeAnchors
             );
             for (const node of graph.nodes.values()) {
+                if (lockedNodeIds.has(node.id)) continue;
                 if (anchorIds.has(node.id) && !allowAnchorMove) continue;
                 const target = targets.get(node.id);
                 if (!target || target.w <= 0) continue;
@@ -165,6 +168,10 @@ export class Relaxer {
     private static getAnchorIds(graph: Graph, useBorder: boolean): Set<NodeId> {
         const anchorIds = new Set<NodeId>();
         for (const node of graph.nodes.values()) {
+            if (node.meta.layoutLocked) {
+                anchorIds.add(node.id);
+                continue;
+            }
             const isTerminal = node.meta.roles.functionalRoles.some(r => r === 'terminal');
             const isBorder = !useBorder && node.meta.roles.functionalRoles.some(r =>
                 r === 'border' || r === 'border-joint'
@@ -174,5 +181,15 @@ export class Relaxer {
             }
         }
         return anchorIds;
+    }
+
+    private static getLockedNodeIds(graph: Graph): Set<NodeId> {
+        const lockedNodeIds = new Set<NodeId>();
+        for (const node of graph.nodes.values()) {
+            if (node.meta.layoutLocked || node.id.startsWith('SN-')) {
+                lockedNodeIds.add(node.id);
+            }
+        }
+        return lockedNodeIds;
     }
 }

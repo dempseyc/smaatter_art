@@ -53,6 +53,7 @@ export class Graph implements GraphData {
                     generation: node.meta.generation,
                     siblingIndex: node.meta.siblingIndex,
                     siblingCount: node.meta.siblingCount,
+                    layoutLocked: node.meta.layoutLocked,
                 }
             });
         });

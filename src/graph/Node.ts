@@ -17,6 +17,7 @@ export interface Node {
         generation: number;
         siblingIndex?: number;
         siblingCount?: number;
+        layoutLocked?: boolean;
     }
 }
 
@@ -34,6 +35,7 @@ export class NodeRecord implements Node {
         generation: number;
         siblingIndex?: number;
         siblingCount?: number;
+        layoutLocked?: boolean;
     };
 
     constructor(data: Partial<Node> & Pick<Node, 'id'>) {
@@ -50,6 +52,7 @@ export class NodeRecord implements Node {
             generation: data.meta?.generation ?? 0,
             siblingIndex: data.meta?.siblingIndex,
             siblingCount: data.meta?.siblingCount,
+            layoutLocked: data.meta?.layoutLocked,
         };
     }
 }

@@ -13,6 +13,37 @@ export interface AnalysisResult {
     snapshots: GraphSnapshot[]; // [snapshot0, snapshot1, 2,3,4,etc]
 }
 
+export interface SupernodeVariantFamily {
+    skeletonGen1: number;
+    skeleton: AnalysisResult;
+    variants: Map<number, AnalysisResult>;
+}
+
+export interface SupernodeSynthesisResult {
+    family: SupernodeVariantFamily;
+    graph: Graph;
+}
+
+export interface SupernodePassOptions {
+    minDegree?: number;
+    maxDegree?: number;
+    preserveSymmetry?: boolean;
+    defaultTerminalShift?: number;
+    terminalShiftByDegree?: Partial<Record<number, number>>;
+}
+
+export interface ReplacementSetCollection {
+    nodeSets: Array<Set<string>>;
+    edgeSets?: Array<Set<string>>;
+}
+
+type PlannedReplacement = {
+    hostNodeId: string;
+    degree: number;
+    flipHorizontal: boolean;
+    terminalShift: number;
+};
+
 export type RelaxMode = 'classic' | 'forces';
 
 export interface RelaxConfig {
@@ -23,6 +54,10 @@ export interface RelaxConfig {
 }
 
 export class Pipeline {
+    private static isSupernodeNodeId(nodeId: string): boolean {
+        return nodeId.startsWith('SN-');
+    }
+
     static generateInitialGraph(layoutEngine: GraphLayoutEngine): Graph {
         let graph = GraphGenerator.generateGraph();
         layoutEngine.apply(graph);
@@ -35,12 +70,16 @@ export class Pipeline {
         const currentGraph = graph.clone();
         const snapshot0 = captureSnapshot(currentGraph);
         const snapshots: GraphSnapshot[] = [snapshot0];
-        const maxIterations = 50;
+        const maxIterations = 100;
+        const clusters = [];
         Analyser.findTwins(currentGraph, width); // mark twins before running further operations, so that all future transformations remain symmetrical
 
         for (let i = 0; i < maxIterations; i++) {
             console.log(`Iteration ${i}`);
-            if (Pipeline.runChainClusters(currentGraph, width)) continue;
+            const { anyChained, clusters: chainedNodes } = Pipeline.runChainClusters(currentGraph, width);
+            clusters.push(...chainedNodes);
+            if (anyChained) continue;
+
             if (Pipeline.runLineLineIntersections(currentGraph, width)) continue; // if we made any intersections, we need to re-run merges and intersections
             if (Pipeline.runNodeLineIntersections(currentGraph, width)) continue; // snap nodes to edges
             if (Pipeline.runCloseConnections(currentGraph, width)) continue;
@@ -54,6 +93,8 @@ export class Pipeline {
         }
 
         snapshots.push(captureSnapshot(currentGraph));
+
+        Pipeline.runCleanup(currentGraph, width, clusters);
         snapshots.push(captureSnapshot(currentGraph));
 
         return { graph: currentGraph, snapshots: snapshots };
@@ -66,20 +107,192 @@ export class Pipeline {
     // Pipeline.splitLongEdges(currentGraph, width);
 
 
+    static runCleanup(graph: Graph, width: number, clusters: string[][]): void {
+        const maxIterations = 50;
+        clusters.forEach(cluster => {
+            GraphGenerator.moveChainedNodesApart(graph, cluster, width / 24); // move cluster nodes threshhold * 1.1 away from the center to avoid repeated cluster analysis.   
+        });
+        for (let i = 0; i < maxIterations; i++) {
+            // Pipeline.runRelax(graph, 3, { targetLength: 0, grow: 0.9 }, { mode: 'classic' });
+            // if (Pipeline.runMerges(graph, width)) continue;
+            if (Pipeline.runLineLineIntersections(graph, width)) continue;
+            if (Pipeline.runNodeLineIntersections(graph, width)) continue;
+            break;
+        }
+    }
+
+    /**
+     * Build one skeleton graph and a family of analyzed variants keyed by gen1 count.
+     * Skeleton uses random gen1 count in [1..variantCount]. Variants are deterministic 1..variantCount.
+     */
+    static buildSupernodeVariantFamily(
+        layoutEngine: GraphLayoutEngine,
+        width: number,
+        variantCount: number = 7,
+        relaxConfig: RelaxConfig = {},
+        baseGraph?: Graph
+    ): SupernodeVariantFamily {
+        const maxCount = Math.max(1, variantCount);
+
+        // "Skeleton" is the main generated graph the user sees and mutates.
+        const skeletonGraph = baseGraph ? baseGraph.clone() : Pipeline.generateInitialGraph(layoutEngine);
+        const skeletonGen1 = Array.from(skeletonGraph.edges.values())
+            .filter(e => e.a === '0' || e.b === '0')
+            .length;
+        const skeleton = Pipeline.runFullAnalysis(skeletonGraph, width, relaxConfig);
+
+        const variants = new Map<number, AnalysisResult>();
+        for (let gen1 = 1; gen1 <= maxCount; gen1++) {
+            const variantGraph = GraphGenerator.generateGraph(gen1);
+            layoutEngine.apply(variantGraph);
+            const analyzed = Pipeline.runFullAnalysis(variantGraph, width, relaxConfig);
+            variants.set(gen1, analyzed);
+        }
+
+        return {
+            skeletonGen1,
+            skeleton,
+            variants,
+        };
+    }
+
+    /**
+     * Build skeleton + variants, then perform one planned supernode replacement transformation pass.
+     */
+    static buildAndApplySupernodes(
+        layoutEngine: GraphLayoutEngine,
+        width: number,
+        variantCount: number = 7,
+        relaxConfig: RelaxConfig = {},
+        passOptions: SupernodePassOptions = {},
+        baseGraph?: Graph
+    ): SupernodeSynthesisResult {
+        const family = this.buildSupernodeVariantFamily(layoutEngine, width, variantCount, relaxConfig, baseGraph);
+        const workingGraph = family.skeleton.graph.clone();
+        this.runSupernodeReplacementPass(workingGraph, family.variants, width, passOptions);
+        return {
+            family,
+            graph: workingGraph,
+        };
+    }
+
+    /**
+     * Single transformation pass over explicit node sets.
+     * The current supernode flow uses centered-node sets, but the same structure is intended
+     * to host other set-based replacements in future passes.
+     */
+    static runSupernodeReplacementPass(
+        graph: Graph,
+        variants: Map<number, AnalysisResult>,
+        _width: number,
+        options: SupernodePassOptions = {},
+        selection: ReplacementSetCollection = Pipeline.buildDefaultReplacementSets(graph)
+    ): boolean {
+        const minDegree = options.minDegree ?? 2;
+        const maxDegree = options.maxDegree ?? 6;
+        const defaultShift = options.defaultTerminalShift ?? 0;
+        const shiftByDegree = options.terminalShiftByDegree ?? {};
+
+        const getDegree = (nodeId: string): number =>
+            Array.from(graph.edges.values()).filter(e => e.a === nodeId || e.b === nodeId).length;
+
+        const planned: PlannedReplacement[] = [];
+        const candidateNodeIds = new Set<string>();
+
+        for (const nodeSet of selection.nodeSets) {
+            for (const nodeId of nodeSet) {
+                candidateNodeIds.add(nodeId);
+            }
+        }
+
+        if (candidateNodeIds.size === 0) {
+            for (const nodeId of Pipeline.buildCenteredNodeSet(graph)) {
+                candidateNodeIds.add(nodeId);
+            }
+        }
+
+        for (const nodeId of candidateNodeIds) {
+            const node = graph.nodes.get(nodeId);
+            if (!node) continue;
+            if (node.id.startsWith('SN-')) continue;
+            if (node.meta.roles.functionalRoles.includes('terminal')) continue;
+            if (node.meta.layoutLocked) continue;
+
+            const degree = getDegree(nodeId);
+            if (degree < minDegree || degree > maxDegree) continue;
+            if (!variants.has(degree)) continue;
+
+            planned.push({
+                hostNodeId: node.id,
+                degree,
+                flipHorizontal: false,
+                terminalShift: shiftByDegree[degree] ?? defaultShift,
+            });
+        }
+
+        if (planned.length === 0) return false;
+
+        let anyApplied = false;
+        for (const plan of planned) {
+            const templateGraph = variants.get(plan.degree)?.graph;
+            if (!templateGraph) continue;
+            if (!graph.nodes.has(plan.hostNodeId)) continue;
+
+            const applied = GraphGenerator.replaceNodeWithSupernode(
+                graph,
+                plan.hostNodeId,
+                templateGraph,
+                {
+                    flipHorizontal: plan.flipHorizontal,
+                    terminalShift: plan.terminalShift,
+                }
+            );
+
+            if (applied) {
+                anyApplied = true;
+            }
+        }
+
+        return anyApplied;
+    }
+
+    static buildCenteredNodeSet(graph: Graph): Set<string> {
+        const centeredNodeIds = new Set<string>();
+        for (const node of graph.nodes.values()) {
+            if (node.id.startsWith('SN-')) continue;
+            if (node.meta.roles.orientation === 'centered') {
+                centeredNodeIds.add(node.id);
+            }
+        }
+        return centeredNodeIds;
+    }
+
+    static buildDefaultReplacementSets(graph: Graph): ReplacementSetCollection {
+        return {
+            nodeSets: [Pipeline.buildCenteredNodeSet(graph)],
+            edgeSets: [],
+        };
+    }
+
+
+
+
     /** Runs once to chain node clusters. if cluster < 3 nodes, it will merge instead. */
-    private static runChainClusters(graph: Graph, width: number): boolean {
+    private static runChainClusters(graph: Graph, width: number): { anyChained: boolean, clusters: string[][] } {
         let anyChained = false;
         const ops = Analyser.findNodeClusters(graph, width);
-        if (ops.length === 0) return false;
+        let clusters = ops.map(op => op.nodes);
+        if (ops.length === 0) return { anyChained: false, clusters: [] };
 
         const modified = new Set<string>();
         for (const op of ops) {
+            if (op.nodes.some(n => this.isSupernodeNodeId(n))) continue;
             if (op.nodes.some(n => modified.has(n))) continue;
             GraphGenerator.chainNodes(graph, op.nodes, { orientation: 'not-center', ordinality: 'middle', functionalRoles: ['loop-seg'], modRoles: [] });
             op.nodes.forEach(n => modified.add(n));
             anyChained = true;
         }
-        return anyChained;
+        return { anyChained, clusters };
     }
 
     /** Repeatedly merges close/coincident nodes until the graph is fully stable. */
@@ -91,6 +304,7 @@ export class Pipeline {
             if (ops.length === 0) { found = false; break; }
             const modified = new Set<string>();
             for (const op of ops) {
+                if (op.nodes.some(n => this.isSupernodeNodeId(n))) continue;
                 if (op.nodes.some(n => modified.has(n))) continue;
                 GraphGenerator.mergeNodes(graph, op.nodes);
                 op.nodes.forEach(n => modified.add(n));
@@ -111,6 +325,10 @@ export class Pipeline {
         // });
 
         for (const op of ops) {
+            if (this.isSupernodeNodeId(op.nodeId)) continue;
+            const edge = graph.edges.get(op.edgeId);
+            if (!edge) continue;
+            if (this.isSupernodeNodeId(edge.a) || this.isSupernodeNodeId(edge.b)) continue;
             // console.log(`[NodeLineIntersections] Processing node ${op.nodeId} on edge ${op.edgeId}`);
             GraphGenerator.insertNodeIntoEdge(graph, op.nodeId, op.edgeId, op.targetX, op.targetY);
         }
@@ -130,6 +348,11 @@ export class Pipeline {
         const seen = new Set<string>();
         const uniqueOps = [];
         for (const op of ops) {
+            const opEdgeA = graph.edges.get(op.edgeA);
+            const opEdgeB = graph.edges.get(op.edgeB);
+            if (!opEdgeA || !opEdgeB) continue;
+            if (this.isSupernodeNodeId(opEdgeA.a) || this.isSupernodeNodeId(opEdgeA.b)) continue;
+            if (this.isSupernodeNodeId(opEdgeB.a) || this.isSupernodeNodeId(opEdgeB.b)) continue;
             const key = [op.edgeA, op.edgeB].sort().join('-');
             if (!seen.has(key)) {
                 seen.add(key);
@@ -464,6 +687,7 @@ export class Pipeline {
         }
 
         for (const op of ops) {
+            if (this.isSupernodeNodeId(op.sourceId) || this.isSupernodeNodeId(op.targetId)) continue;
             const roles: EdgeRoles = {
                 orientation: 'not-center',
                 ordinality: 'middle',
@@ -481,6 +705,7 @@ export class Pipeline {
         if (ops.length === 0) return false;
 
         for (const op of ops) {
+            if (this.isSupernodeNodeId(op.sourceId) || this.isSupernodeNodeId(op.targetId)) continue;
             const roles: EdgeRoles = {
                 orientation: 'not-center',
                 ordinality: 'middle',
